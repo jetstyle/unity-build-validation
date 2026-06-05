@@ -341,6 +341,9 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
                 BuildReferenceValidator.ValidationIssue issue = FindIssue(report, assetPath, nameof(ValidatorExposedReferencePlayableAsset.targetTransform));
                 Assert.That(issue, Is.Not.Null);
                 Assert.That(issue.Context, Is.EqualTo(director));
+                Assert.That(issue.ResolverSource, Does.Contain(scenePath));
+                Assert.That(issue.ResolverSource, Does.Contain("Director"));
+                Assert.That(issue.ToString(), Does.Contain("Resolver='"));
             }
             finally
             {
