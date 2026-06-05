@@ -1,0 +1,14 @@
+{
+    "name": "JetXR.Unity.BuildValidation",
+    "rootNamespace": "JetXR.Unity.BuildValidation",
+    "references": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

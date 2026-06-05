@@ -1,0 +1,24 @@
+{
+    "name": "JetXR.Unity.BuildValidation.Editor.Tests",
+    "rootNamespace": "JetXR.Unity.BuildValidation.Tests.Editor",
+    "references": [
+        "JetXR.Unity.BuildValidation",
+        "JetXR.Unity.BuildValidation.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false,
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}

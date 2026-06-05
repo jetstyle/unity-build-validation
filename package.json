@@ -1,0 +1,16 @@
+{
+    "name": "style.jetxr.buildvalidation",
+    "version": "1.0.0",
+    "displayName": "Build Validation",
+    "description": "Build-time validation for Unity projects",
+    "unity": "2022.3",
+    "author": {
+        "name": "JetXR"
+    },
+    "license": "MIT",
+    "keywords": [
+        "BuildValidation",
+        "validation",
+        "build"
+    ]
+}
