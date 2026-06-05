@@ -152,7 +152,7 @@ namespace JetXR.Unity.BuildValidation.Editor
                 if (asset == null || asset is GameObject || asset is Component || asset is MonoScript)
                     continue;
 
-                ValidateObject(asset, assetPath, null, report, scannedObjects, reportedInvalidMembers, null, null);
+                ValidateObject(asset, assetPath, null, report, scannedObjects, reportedInvalidMembers, null, null, null);
             }
         }
 
@@ -164,7 +164,7 @@ namespace JetXR.Unity.BuildValidation.Editor
                     continue;
 
                 if (component is MonoBehaviour behaviour)
-                    ValidateObject(behaviour, sourcePath, GetHierarchyPath(behaviour.transform), report, scannedObjects, reportedInvalidMembers, null, null);
+                ValidateObject(behaviour, sourcePath, GetHierarchyPath(behaviour.transform), report, scannedObjects, reportedInvalidMembers, null, null, null);
 
                 if (component is IExposedPropertyTable resolver)
                     ValidateResolver(component, resolver, sourcePath, report, scannedObjects, reportedInvalidMembers);
@@ -176,20 +176,23 @@ namespace JetXR.Unity.BuildValidation.Editor
             if (resolverObject is PlayableDirector director && director.playableAsset != null)
             {
                 string assetPath = AssetDatabase.GetAssetPath(director.playableAsset);
-                ValidatePlayableAssetWithResolver(director.playableAsset, resolver, resolverObject, string.IsNullOrEmpty(assetPath) ? sourcePath : assetPath, GetHierarchyPath(director.transform), report, scannedObjects, reportedInvalidMembers);
+                string hierarchyPath = GetHierarchyPath(director.transform);
+                string resolverSource = GetResolverSourceDescription(sourcePath, hierarchyPath);
+                ValidatePlayableAssetWithResolver(director.playableAsset, resolver, resolverObject, string.IsNullOrEmpty(assetPath) ? sourcePath : assetPath, hierarchyPath, report, scannedObjects, reportedInvalidMembers, resolverSource);
             }
             else
             {
-                ValidateObject(resolverObject, sourcePath, resolverObject is Component component ? GetHierarchyPath(component.transform) : null, report, scannedObjects, reportedInvalidMembers, resolver, resolverObject);
+                string hierarchyPath = resolverObject is Component component ? GetHierarchyPath(component.transform) : null;
+                ValidateObject(resolverObject, sourcePath, hierarchyPath, report, scannedObjects, reportedInvalidMembers, resolver, resolverObject, GetResolverSourceDescription(sourcePath, hierarchyPath));
             }
         }
 
-        static void ValidatePlayableAssetWithResolver(PlayableAsset playableAsset, IExposedPropertyTable resolver, Object resolverObject, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers)
+        static void ValidatePlayableAssetWithResolver(PlayableAsset playableAsset, IExposedPropertyTable resolver, Object resolverObject, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers, string resolverSource)
         {
             if (playableAsset == null)
                 return;
 
-            ValidateObject(playableAsset, sourcePath, hierarchyPath, report, scannedObjects, reportedInvalidMembers, resolver, resolverObject);
+            ValidateObject(playableAsset, sourcePath, hierarchyPath, report, scannedObjects, reportedInvalidMembers, resolver, resolverObject, resolverSource);
 
             string assetPath = AssetDatabase.GetAssetPath(playableAsset);
             if (string.IsNullOrEmpty(assetPath))
@@ -200,11 +203,11 @@ namespace JetXR.Unity.BuildValidation.Editor
                 if (asset == null || asset == playableAsset || asset is GameObject || asset is Component || asset is MonoScript)
                     continue;
 
-                ValidateObject(asset, assetPath, hierarchyPath, report, scannedObjects, reportedInvalidMembers, resolver, resolverObject);
+                ValidateObject(asset, assetPath, hierarchyPath, report, scannedObjects, reportedInvalidMembers, resolver, resolverObject, resolverSource);
             }
         }
 
-        static void ValidateObject(Object target, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers, IExposedPropertyTable resolver, Object resolverObject)
+        static void ValidateObject(Object target, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers, IExposedPropertyTable resolver, Object resolverObject, string resolverSource)
         {
             if (target == null)
                 return;
@@ -238,7 +241,7 @@ namespace JetXR.Unity.BuildValidation.Editor
                 }
 
                 if (field.IsExposedReference)
-                    ValidateExposedReferenceProperty(property, field, target, issueContext, sourcePath, hierarchyPath, report, resolver);
+                    ValidateExposedReferenceProperty(property, field, target, issueContext, sourcePath, hierarchyPath, report, resolver, resolverSource);
                 else if (field.IsCollection)
                     ValidateCollectionProperty(property, field, target, issueContext, sourcePath, hierarchyPath, report);
                 else
@@ -269,14 +272,19 @@ namespace JetXR.Unity.BuildValidation.Editor
                 report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, property.propertyPath, "Reference is not set.", field.Attribute.FailMessage));
         }
 
-        static void ValidateExposedReferenceProperty(SerializedProperty property, ValidatedField field, Object target, Object issueContext, string sourcePath, string hierarchyPath, ValidationReport report, IExposedPropertyTable resolver)
+        static void ValidateExposedReferenceProperty(SerializedProperty property, ValidatedField field, Object target, Object issueContext, string sourcePath, string hierarchyPath, ValidationReport report, IExposedPropertyTable resolver, string resolverSource)
         {
             if (resolver == null)
                 return;
 
             Object resolvedValue = ResolveExposedReference(field.Field, target, resolver);
             if (resolvedValue == null)
-                report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, property.propertyPath, "Exposed reference is not resolved.", field.Attribute.FailMessage));
+                report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, property.propertyPath, "Exposed reference is not resolved.", field.Attribute.FailMessage, resolverSource: resolverSource));
+        }
+
+        static string GetResolverSourceDescription(string sourcePath, string hierarchyPath)
+        {
+            return string.IsNullOrEmpty(hierarchyPath) ? sourcePath : $"{sourcePath} :: {hierarchyPath}";
         }
 
         static Object ResolveExposedReference(FieldInfo field, Object target, IExposedPropertyTable resolver)
@@ -534,7 +542,7 @@ namespace JetXR.Unity.BuildValidation.Editor
 
         public sealed class ValidationIssue
         {
-            public ValidationIssue(ReferenceValidationSeverity severity, Object context, string sourcePath, string hierarchyPath, Type targetType, string fieldName, string propertyPath, string message, string failMessage, int? collectionIndex = null, string methodName = null)
+            public ValidationIssue(ReferenceValidationSeverity severity, Object context, string sourcePath, string hierarchyPath, Type targetType, string fieldName, string propertyPath, string message, string failMessage, int? collectionIndex = null, string methodName = null, string resolverSource = null)
             {
                 Severity = severity;
                 Context = context;
@@ -547,6 +555,7 @@ namespace JetXR.Unity.BuildValidation.Editor
                 FailMessage = failMessage;
                 CollectionIndex = collectionIndex;
                 MethodName = methodName;
+                ResolverSource = resolverSource;
             }
 
             public ReferenceValidationSeverity Severity { get; }
@@ -560,6 +569,7 @@ namespace JetXR.Unity.BuildValidation.Editor
             public string FailMessage { get; }
             public int? CollectionIndex { get; }
             public string MethodName { get; }
+            public string ResolverSource { get; }
 
             public override string ToString()
             {
@@ -569,7 +579,8 @@ namespace JetXR.Unity.BuildValidation.Editor
                 string subject = string.IsNullOrEmpty(MethodName) ? $"Field='{FieldName}', Property='{property}{index}'" : $"Method='{MethodName}'";
                 string attributeName = string.IsNullOrEmpty(MethodName) ? nameof(ValidateReferenceSetAttribute) : nameof(ValidateInvokeAttribute);
 
-                string details = $"[{attributeName}:{Severity}] {Message} Source='{SourcePath}', Object='{hierarchy}', Component='{TargetType.FullName}', {subject}.";
+                string resolver = string.IsNullOrEmpty(ResolverSource) ? string.Empty : $", Resolver='{ResolverSource}'";
+                string details = $"[{attributeName}:{Severity}] {Message} Source='{SourcePath}', Object='{hierarchy}', Component='{TargetType.FullName}', {subject}{resolver}.";
                 return string.IsNullOrEmpty(FailMessage) ? details : $"{FailMessage}\n{details}";
             }
         }

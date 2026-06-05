@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.1.1] - 2026-06-05
+
+- Fixed `ExposedReference<T>` validation messages to include the resolver source.
+
 ## [1.1.0] - 2026-06-05
 
 - Added `ValidateInvoke`.
