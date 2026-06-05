@@ -12,6 +12,7 @@ using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Playables;
 using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 
@@ -22,6 +23,7 @@ namespace JetXR.Unity.BuildValidation.Editor
         const string MenuPath = "Tools/Validation/Validate Required References For Build";
 
         static readonly Dictionary<Type, ValidatedField[]> FieldCache = new Dictionary<Type, ValidatedField[]>();
+        static readonly Dictionary<Type, ValidatedMethod[]> MethodCache = new Dictionary<Type, ValidatedMethod[]>();
 
         public int callbackOrder => 0;
 
@@ -47,16 +49,17 @@ namespace JetXR.Unity.BuildValidation.Editor
         public static ValidationReport ValidateBuildContent(bool logResults)
         {
             var report = new ValidationReport();
-            var scannedObjects = new HashSet<int>();
+            var scannedObjects = new HashSet<string>();
+            var reportedInvalidMembers = new HashSet<string>();
             string[] buildScenes = GetEnabledBuildScenes();
             string[] resources = GetResourcesAssetPaths();
             string[] dependencies = GetDependencies(buildScenes.Concat(resources));
 
             foreach (string scenePath in buildScenes)
-                ValidateScene(scenePath, report, scannedObjects);
+                ValidateScene(scenePath, report, scannedObjects, reportedInvalidMembers);
 
             foreach (string assetPath in dependencies.Concat(resources).Distinct())
-                ValidateAsset(assetPath, report, scannedObjects);
+                ValidateAsset(assetPath, report, scannedObjects, reportedInvalidMembers);
 
             if (logResults)
                 LogReport(report);
@@ -111,7 +114,7 @@ namespace JetXR.Unity.BuildValidation.Editor
                 .ToArray();
         }
 
-        static void ValidateScene(string scenePath, ValidationReport report, HashSet<int> scannedObjects)
+        static void ValidateScene(string scenePath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers)
         {
             Scene scene = SceneManager.GetSceneByPath(scenePath);
             bool wasLoaded = scene.IsValid() && scene.isLoaded;
@@ -122,7 +125,7 @@ namespace JetXR.Unity.BuildValidation.Editor
             try
             {
                 foreach (GameObject root in scene.GetRootGameObjects())
-                    ValidateGameObjectHierarchy(root, scenePath, report, scannedObjects);
+                    ValidateGameObjectHierarchy(root, scenePath, report, scannedObjects, reportedInvalidMembers);
             }
             finally
             {
@@ -131,7 +134,7 @@ namespace JetXR.Unity.BuildValidation.Editor
             }
         }
 
-        static void ValidateAsset(string assetPath, ValidationReport report, HashSet<int> scannedObjects)
+        static void ValidateAsset(string assetPath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers)
         {
             if (string.IsNullOrEmpty(assetPath))
                 return;
@@ -142,82 +145,152 @@ namespace JetXR.Unity.BuildValidation.Editor
 
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
             if (prefab != null)
-                ValidateGameObjectHierarchy(prefab, assetPath, report, scannedObjects);
+                ValidateGameObjectHierarchy(prefab, assetPath, report, scannedObjects, reportedInvalidMembers);
 
             foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(assetPath))
             {
                 if (asset == null || asset is GameObject || asset is Component || asset is MonoScript)
                     continue;
 
-                ValidateObject(asset, assetPath, null, report, scannedObjects);
+                ValidateObject(asset, assetPath, null, report, scannedObjects, reportedInvalidMembers, null, null);
             }
         }
 
-        static void ValidateGameObjectHierarchy(GameObject root, string sourcePath, ValidationReport report, HashSet<int> scannedObjects)
+        static void ValidateGameObjectHierarchy(GameObject root, string sourcePath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers)
         {
-            foreach (MonoBehaviour behaviour in root.GetComponentsInChildren<MonoBehaviour>(includeInactive: true))
+            foreach (Component component in root.GetComponentsInChildren<Component>(includeInactive: true))
             {
-                if (behaviour == null)
+                if (component == null)
                     continue;
 
-                ValidateObject(behaviour, sourcePath, GetHierarchyPath(behaviour.transform), report, scannedObjects);
+                if (component is MonoBehaviour behaviour)
+                    ValidateObject(behaviour, sourcePath, GetHierarchyPath(behaviour.transform), report, scannedObjects, reportedInvalidMembers, null, null);
+
+                if (component is IExposedPropertyTable resolver)
+                    ValidateResolver(component, resolver, sourcePath, report, scannedObjects, reportedInvalidMembers);
             }
         }
 
-        static void ValidateObject(Object target, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<int> scannedObjects)
+        static void ValidateResolver(Object resolverObject, IExposedPropertyTable resolver, string sourcePath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers)
+        {
+            if (resolverObject is PlayableDirector director && director.playableAsset != null)
+            {
+                string assetPath = AssetDatabase.GetAssetPath(director.playableAsset);
+                ValidatePlayableAssetWithResolver(director.playableAsset, resolver, resolverObject, string.IsNullOrEmpty(assetPath) ? sourcePath : assetPath, GetHierarchyPath(director.transform), report, scannedObjects, reportedInvalidMembers);
+            }
+            else
+            {
+                ValidateObject(resolverObject, sourcePath, resolverObject is Component component ? GetHierarchyPath(component.transform) : null, report, scannedObjects, reportedInvalidMembers, resolver, resolverObject);
+            }
+        }
+
+        static void ValidatePlayableAssetWithResolver(PlayableAsset playableAsset, IExposedPropertyTable resolver, Object resolverObject, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers)
+        {
+            if (playableAsset == null)
+                return;
+
+            ValidateObject(playableAsset, sourcePath, hierarchyPath, report, scannedObjects, reportedInvalidMembers, resolver, resolverObject);
+
+            string assetPath = AssetDatabase.GetAssetPath(playableAsset);
+            if (string.IsNullOrEmpty(assetPath))
+                return;
+
+            foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(assetPath))
+            {
+                if (asset == null || asset == playableAsset || asset is GameObject || asset is Component || asset is MonoScript)
+                    continue;
+
+                ValidateObject(asset, assetPath, hierarchyPath, report, scannedObjects, reportedInvalidMembers, resolver, resolverObject);
+            }
+        }
+
+        static void ValidateObject(Object target, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers, IExposedPropertyTable resolver, Object resolverObject)
         {
             if (target == null)
                 return;
 
-            int instanceId = target.GetInstanceID();
-            if (!scannedObjects.Add(instanceId))
+            string scanKey = GetScanKey(target, resolver, resolverObject);
+            if (!scannedObjects.Add(scanKey))
                 return;
 
             ValidatedField[] fields = GetValidatedFields(target.GetType());
-            if (fields.Length == 0)
+            ValidatedMethod[] methods = GetValidatedMethods(target.GetType());
+            if (fields.Length == 0 && methods.Length == 0)
                 return;
 
-            var serializedObject = new UnityEditor.SerializedObject(target);
+            var serializedObject = resolverObject != null ? new UnityEditor.SerializedObject(target, resolverObject) : new UnityEditor.SerializedObject(target);
+            Object issueContext = resolverObject != null ? resolverObject : target;
 
             foreach (ValidatedField field in fields)
             {
                 if (field.IsUnsupported)
                 {
-                    report.Add(new ValidationIssue(ReferenceValidationSeverity.Warning, target, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, null, $"Field is marked for validation but has unsupported field type '{field.Field.FieldType.FullName}'. Use UnityEngine.Object references or arrays/List<T> of UnityEngine.Object references.", field.Attribute.FailMessage));
+                    if (TryMarkInvalidMemberReported(reportedInvalidMembers, field.Field))
+                        report.Add(new ValidationIssue(ReferenceValidationSeverity.Fatal, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, null, $"Field is marked for validation but has unsupported field type '{field.Field.FieldType.FullName}'. Use UnityEngine.Object references, ExposedReference<T>, or arrays/List<T> of UnityEngine.Object references.", field.Attribute.FailMessage));
                     continue;
                 }
 
                 SerializedProperty property = serializedObject.FindProperty(field.Field.Name);
                 if (property == null)
                 {
-                    report.Add(new ValidationIssue(field.Attribute.Severity, target, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, null, "Field is marked for validation but is not serialized by Unity.", field.Attribute.FailMessage));
+                    report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, null, "Field is marked for validation but is not serialized by Unity.", field.Attribute.FailMessage));
                     continue;
                 }
 
-                if (field.IsCollection)
-                    ValidateCollectionProperty(property, field, target, sourcePath, hierarchyPath, report);
+                if (field.IsExposedReference)
+                    ValidateExposedReferenceProperty(property, field, target, issueContext, sourcePath, hierarchyPath, report, resolver);
+                else if (field.IsCollection)
+                    ValidateCollectionProperty(property, field, target, issueContext, sourcePath, hierarchyPath, report);
                 else
-                    ValidateSingleReferenceProperty(property, field, target, sourcePath, hierarchyPath, report);
+                    ValidateSingleReferenceProperty(property, field, target, issueContext, sourcePath, hierarchyPath, report);
+            }
+
+            foreach (ValidatedMethod method in methods)
+            {
+                ValidateInvokedMethod(method, target, issueContext, sourcePath, hierarchyPath, report, reportedInvalidMembers);
             }
         }
 
-        static void ValidateSingleReferenceProperty(SerializedProperty property, ValidatedField field, Object target, string sourcePath, string hierarchyPath, ValidationReport report)
+        static string GetScanKey(Object target, IExposedPropertyTable resolver, Object resolverObject)
+        {
+            string resolverKey = resolver == null ? "none" : resolverObject != null ? resolverObject.GetInstanceID().ToString() : resolver.GetHashCode().ToString();
+            return $"{target.GetInstanceID()}:{resolverKey}";
+        }
+
+        static void ValidateSingleReferenceProperty(SerializedProperty property, ValidatedField field, Object target, Object issueContext, string sourcePath, string hierarchyPath, ValidationReport report)
         {
             if (property.propertyType != SerializedPropertyType.ObjectReference)
             {
-                report.Add(new ValidationIssue(field.Attribute.Severity, target, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, property.propertyPath, $"Unsupported serialized property type: {property.propertyType}.", field.Attribute.FailMessage));
+                report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, property.propertyPath, $"Unsupported serialized property type: {property.propertyType}.", field.Attribute.FailMessage));
                 return;
             }
 
             if (property.objectReferenceValue == null)
-                report.Add(new ValidationIssue(field.Attribute.Severity, target, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, property.propertyPath, "Reference is not set.", field.Attribute.FailMessage));
+                report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, property.propertyPath, "Reference is not set.", field.Attribute.FailMessage));
         }
 
-        static void ValidateCollectionProperty(SerializedProperty property, ValidatedField field, Object target, string sourcePath, string hierarchyPath, ValidationReport report)
+        static void ValidateExposedReferenceProperty(SerializedProperty property, ValidatedField field, Object target, Object issueContext, string sourcePath, string hierarchyPath, ValidationReport report, IExposedPropertyTable resolver)
+        {
+            if (resolver == null)
+                return;
+
+            Object resolvedValue = ResolveExposedReference(field.Field, target, resolver);
+            if (resolvedValue == null)
+                report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, property.propertyPath, "Exposed reference is not resolved.", field.Attribute.FailMessage));
+        }
+
+        static Object ResolveExposedReference(FieldInfo field, Object target, IExposedPropertyTable resolver)
+        {
+            object exposedReference = field.GetValue(target);
+            MethodInfo resolveMethod = field.FieldType.GetMethod(nameof(ExposedReference<Object>.Resolve), new[] { typeof(IExposedPropertyTable) });
+            return resolveMethod?.Invoke(exposedReference, new object[] { resolver }) as Object;
+        }
+
+        static void ValidateCollectionProperty(SerializedProperty property, ValidatedField field, Object target, Object issueContext, string sourcePath, string hierarchyPath, ValidationReport report)
         {
             if (!property.isArray)
             {
-                report.Add(new ValidationIssue(field.Attribute.Severity, target, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, property.propertyPath, "Collection field is not serialized as an array/list.", field.Attribute.FailMessage));
+                report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, property.propertyPath, "Collection field is not serialized as an array/list.", field.Attribute.FailMessage));
                 return;
             }
 
@@ -226,12 +299,12 @@ namespace JetXR.Unity.BuildValidation.Editor
                 SerializedProperty element = property.GetArrayElementAtIndex(i);
                 if (element.propertyType != SerializedPropertyType.ObjectReference)
                 {
-                    report.Add(new ValidationIssue(field.Attribute.Severity, target, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, element.propertyPath, $"Unsupported serialized collection element type: {element.propertyType}.", field.Attribute.FailMessage, i));
+                    report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, element.propertyPath, $"Unsupported serialized collection element type: {element.propertyType}.", field.Attribute.FailMessage, i));
                     continue;
                 }
 
                 if (element.objectReferenceValue == null)
-                    report.Add(new ValidationIssue(field.Attribute.Severity, target, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, element.propertyPath, "Reference element is not set.", field.Attribute.FailMessage, i));
+                    report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, element.propertyPath, "Reference element is not set.", field.Attribute.FailMessage, i));
             }
         }
 
@@ -261,6 +334,82 @@ namespace JetXR.Unity.BuildValidation.Editor
             return cachedFields;
         }
 
+        static ValidatedMethod[] GetValidatedMethods(Type type)
+        {
+            if (MethodCache.TryGetValue(type, out ValidatedMethod[] cachedMethods))
+                return cachedMethods;
+
+            var methods = new List<ValidatedMethod>();
+            for (Type currentType = type; currentType != null && currentType != typeof(MonoBehaviour) && currentType != typeof(ScriptableObject); currentType = currentType.BaseType)
+            {
+                foreach (MethodInfo method in currentType.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                {
+                    ValidateInvokeAttribute attribute = method.GetCustomAttribute<ValidateInvokeAttribute>();
+                    if (attribute == null)
+                        continue;
+
+                    methods.Add(CreateValidatedMethod(method));
+                }
+            }
+
+            cachedMethods = methods.ToArray();
+            MethodCache[type] = cachedMethods;
+            return cachedMethods;
+        }
+
+        static ValidatedMethod CreateValidatedMethod(MethodInfo method)
+        {
+            string invalidReason = null;
+
+            if (method.IsStatic)
+                invalidReason = "Method is static.";
+            else if (method.GetParameters().Length != 0)
+                invalidReason = "Method must not declare parameters.";
+            else if (method.ReturnType != typeof(BuildValidationResult))
+                invalidReason = $"Method must return {typeof(BuildValidationResult).FullName}.";
+
+            return new ValidatedMethod(method, invalidReason);
+        }
+
+        static void ValidateInvokedMethod(ValidatedMethod method, Object target, Object issueContext, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<string> reportedInvalidMembers)
+        {
+            if (method.IsInvalid)
+            {
+                if (TryMarkInvalidMemberReported(reportedInvalidMembers, method.Method))
+                    report.Add(new ValidationIssue(ReferenceValidationSeverity.Fatal, issueContext, sourcePath, hierarchyPath, target.GetType(), null, null, $"Invalid {nameof(ValidateInvokeAttribute)} method signature. {method.InvalidReason}", null, null, method.Method.Name));
+                return;
+            }
+
+            BuildValidationResult result;
+            try
+            {
+                result = (BuildValidationResult)method.Method.Invoke(target, null);
+            }
+            catch (TargetInvocationException exception)
+            {
+                Exception innerException = exception.InnerException ?? exception;
+                report.Add(new ValidationIssue(ReferenceValidationSeverity.Fatal, issueContext, sourcePath, hierarchyPath, target.GetType(), null, null, $"Validation method threw {innerException.GetType().FullName}: {innerException.Message}", null, null, method.Method.Name));
+                return;
+            }
+            catch (Exception exception)
+            {
+                report.Add(new ValidationIssue(ReferenceValidationSeverity.Fatal, issueContext, sourcePath, hierarchyPath, target.GetType(), null, null, $"Validation method could not be invoked: {exception.GetType().FullName}: {exception.Message}", null, null, method.Method.Name));
+                return;
+            }
+
+            if (result.Passed)
+                return;
+
+            string message = string.IsNullOrEmpty(result.Message) ? "Validation method reported an issue." : result.Message;
+            report.Add(new ValidationIssue(result.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), null, null, message, null, null, method.Method.Name));
+        }
+
+        static bool TryMarkInvalidMemberReported(HashSet<string> reportedInvalidMembers, MemberInfo member)
+        {
+            string key = $"{member.DeclaringType?.AssemblyQualifiedName}.{member.MetadataToken}";
+            return reportedInvalidMembers.Add(key);
+        }
+
         static bool IsUnitySerializedField(FieldInfo field)
         {
             if (field.IsStatic || field.IsInitOnly || field.IsLiteral)
@@ -276,9 +425,15 @@ namespace JetXR.Unity.BuildValidation.Editor
         {
             Type fieldType = field.FieldType;
             bool isCollection = false;
+            bool isExposedReference = false;
             Type referenceType = fieldType;
 
-            if (fieldType.IsArray)
+            if (fieldType.IsGenericType && fieldType.GetGenericTypeDefinition() == typeof(ExposedReference<>))
+            {
+                isExposedReference = true;
+                referenceType = fieldType.GetGenericArguments()[0];
+            }
+            else if (fieldType.IsArray)
             {
                 isCollection = true;
                 referenceType = fieldType.GetElementType();
@@ -291,10 +446,10 @@ namespace JetXR.Unity.BuildValidation.Editor
 
             if (referenceType != null && typeof(Object).IsAssignableFrom(referenceType))
             {
-                return new ValidatedField(field, attribute, isCollection, isUnsupported: false);
+                return new ValidatedField(field, attribute, isCollection, isUnsupported: false, isExposedReference);
             }
 
-            return new ValidatedField(field, attribute, isCollection: false, isUnsupported: true);
+            return new ValidatedField(field, attribute, isCollection: false, isUnsupported: true, isExposedReference: false);
         }
 
         static string GetHierarchyPath(Transform transform)
@@ -334,18 +489,33 @@ namespace JetXR.Unity.BuildValidation.Editor
 
         readonly struct ValidatedField
         {
-            public ValidatedField(FieldInfo field, ValidateReferenceSetAttribute attribute, bool isCollection, bool isUnsupported)
+            public ValidatedField(FieldInfo field, ValidateReferenceSetAttribute attribute, bool isCollection, bool isUnsupported, bool isExposedReference)
             {
                 Field = field;
                 Attribute = attribute;
                 IsCollection = isCollection;
                 IsUnsupported = isUnsupported;
+                IsExposedReference = isExposedReference;
             }
 
             public FieldInfo Field { get; }
             public ValidateReferenceSetAttribute Attribute { get; }
             public bool IsCollection { get; }
             public bool IsUnsupported { get; }
+            public bool IsExposedReference { get; }
+        }
+
+        readonly struct ValidatedMethod
+        {
+            public ValidatedMethod(MethodInfo method, string invalidReason)
+            {
+                Method = method;
+                InvalidReason = invalidReason;
+            }
+
+            public MethodInfo Method { get; }
+            public string InvalidReason { get; }
+            public bool IsInvalid => !string.IsNullOrEmpty(InvalidReason);
         }
 
         public sealed class ValidationReport
@@ -364,7 +534,7 @@ namespace JetXR.Unity.BuildValidation.Editor
 
         public sealed class ValidationIssue
         {
-            public ValidationIssue(ReferenceValidationSeverity severity, Object context, string sourcePath, string hierarchyPath, Type targetType, string fieldName, string propertyPath, string message, string failMessage, int? collectionIndex = null)
+            public ValidationIssue(ReferenceValidationSeverity severity, Object context, string sourcePath, string hierarchyPath, Type targetType, string fieldName, string propertyPath, string message, string failMessage, int? collectionIndex = null, string methodName = null)
             {
                 Severity = severity;
                 Context = context;
@@ -376,6 +546,7 @@ namespace JetXR.Unity.BuildValidation.Editor
                 Message = message;
                 FailMessage = failMessage;
                 CollectionIndex = collectionIndex;
+                MethodName = methodName;
             }
 
             public ReferenceValidationSeverity Severity { get; }
@@ -388,14 +559,17 @@ namespace JetXR.Unity.BuildValidation.Editor
             public string Message { get; }
             public string FailMessage { get; }
             public int? CollectionIndex { get; }
+            public string MethodName { get; }
 
             public override string ToString()
             {
                 string hierarchy = string.IsNullOrEmpty(HierarchyPath) ? "<asset>" : HierarchyPath;
                 string property = string.IsNullOrEmpty(PropertyPath) ? FieldName : PropertyPath;
                 string index = CollectionIndex.HasValue ? $"[{CollectionIndex.Value}]" : string.Empty;
+                string subject = string.IsNullOrEmpty(MethodName) ? $"Field='{FieldName}', Property='{property}{index}'" : $"Method='{MethodName}'";
+                string attributeName = string.IsNullOrEmpty(MethodName) ? nameof(ValidateReferenceSetAttribute) : nameof(ValidateInvokeAttribute);
 
-                string details = $"[{nameof(ValidateReferenceSetAttribute)}:{Severity}] {Message} Source='{SourcePath}', Object='{hierarchy}', Component='{TargetType.FullName}', Field='{FieldName}', Property='{property}{index}'.";
+                string details = $"[{attributeName}:{Severity}] {Message} Source='{SourcePath}', Object='{hierarchy}', Component='{TargetType.FullName}', {subject}.";
                 return string.IsNullOrEmpty(FailMessage) ? details : $"{FailMessage}\n{details}";
             }
         }

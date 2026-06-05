@@ -1,18 +1,25 @@
 # BuildValidation
 
-BuildValidation is a JetXR Unity package for checking required object references before a player build is created.
+BuildValidation is a JetXR Unity package for checking project-specific validation rules before a player build is created.
 
-The package adds a field attribute that marks a serialized Unity object reference as required. During a build, BuildValidation scans build content and reports every missing marked reference it finds. Fatal validation issues stop the build after the scan is complete.
+The package adds attributes that mark serialized Unity object references as required and validation methods as build checks. During a build, BuildValidation scans build content and reports every issue it finds. Fatal validation issues stop the build after the scan is complete.
 
 ## Installation
 
-Add the package to the Unity project as an embedded package:
+Install the package through Unity Package Manager from the Git repository:
 
 ```text
-Packages/style.jetxr.buildvalidation
+https://github.com/jetstyle/unity-build-validation.git
 ```
 
-The package id is:
+In Unity:
+
+1. Open `Window > Package Manager`.
+2. Click `+`.
+3. Select `Add package from git URL...`.
+4. Enter the repository URL.
+
+The package name is:
 
 ```text
 style.jetxr.buildvalidation
@@ -53,6 +60,31 @@ public List<GameObject> prefabs;
 
 Fields must be serialized by Unity. Public fields and private fields with `[SerializeField]` are supported. Static fields and non-serialized fields are ignored.
 
+`ExposedReference<T>` fields are supported when `T` is a Unity object type. BuildValidation resolves them through an `IExposedPropertyTable` context. In scenes this commonly comes from `PlayableDirector`. Standalone assets without a resolver context are not failed for unresolved exposed references.
+
+Use `[ValidateInvoke]` when validation logic needs code:
+
+```csharp
+using JetXR.Unity.BuildValidation;
+using UnityEngine;
+
+public sealed class ExampleMapSettings : MonoBehaviour
+{
+    public Texture2D requiredMap;
+
+    [ValidateInvoke]
+    private BuildValidationResult OnBuildValidate()
+    {
+        if (requiredMap == null)
+            return BuildValidationResult.Fatal("Required map is missing.");
+
+        return BuildValidationResult.Pass();
+    }
+}
+```
+
+Methods marked with `[ValidateInvoke]` must be instance methods without parameters and must return `BuildValidationResult`. They can be public, protected, or private. BuildValidation calls these methods explicitly before the build; Unity runtime lifecycle methods such as `Awake`, `Start`, and `OnEnable` are not part of the validation contract.
+
 ## Manual Validation
 
 Run validation without starting a build from:
@@ -73,8 +105,9 @@ BuildValidation checks:
 - ScriptableObject assets included through build dependencies;
 - other serialized Unity object assets included through build dependencies;
 - assets under `Resources`, even when they are not referenced by a scene.
+- `ExposedReference<T>` fields in playable assets used by `PlayableDirector` components in checked scenes.
 
-For each missing reference, the Unity Console receives a message with the severity, asset or scene path, object path, component or asset type, field name, and serialized property path. Console messages use the relevant Unity object as context, so selecting the log entry can ping or select the related asset or object.
+For each issue, the Unity Console receives a message with the severity, asset or scene path, object path, component or asset type, and the field or method that reported the issue. Console messages use the relevant Unity object as context, so selecting the log entry can ping or select the related asset or object.
 
 If a custom fail message is passed to the attribute, that message is written as the first line of the Console entry. The default validation details are written after it.
 
@@ -85,3 +118,5 @@ Severity controls the build result:
 - `Fatal` logs an error and fails the build after all validation issues have been reported.
 
 Array and `List<T>` fields are checked per element. Empty arrays and lists are valid. Null elements are reported with their element index.
+
+Invalid `[ValidateInvoke]` method signatures and exceptions thrown by validation methods are reported as `Fatal`.
