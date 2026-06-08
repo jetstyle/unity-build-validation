@@ -737,6 +737,43 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
             }
         }
 
+        [Test]
+        public void BuildTypeValidatorReceivesStoredSettings()
+        {
+            Type validatorType = typeof(SettingsBuildTypeValidator);
+            bool wasEnabled = SetBuildTypeValidatorEnabled(validatorType, enabled: true);
+            try
+            {
+                BuildTypeValidatorDescriptor descriptor = FindBuildTypeValidatorDescriptor(validatorType);
+                var settings = (SettingsBuildTypeValidatorSettings)BuildValidationSettings.instance.GetOrCreateBuildTypeValidatorSettings(descriptor);
+                settings.shouldReport = true;
+                settings.message = "Configured validator message.";
+                settings.severity = ReferenceValidationSeverity.Warning;
+                BuildValidationSettings.instance.SaveSettings();
+
+                var asset = ScriptableObject.CreateInstance<BuildTypeSettingsTargetScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypeSettingsTarget.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                BuildReferenceValidator.ValidationIssue issue = FindValidatorIssue(report, assetPath, validatorType);
+                Assert.That(issue, Is.Not.Null);
+                Assert.That(issue.Severity, Is.EqualTo(ReferenceValidationSeverity.Warning));
+                Assert.That(issue.Message, Is.EqualTo(settings.message));
+            }
+            finally
+            {
+                BuildTypeValidatorDescriptor descriptor = FindBuildTypeValidatorDescriptor(validatorType);
+                var settings = (SettingsBuildTypeValidatorSettings)BuildValidationSettings.instance.GetOrCreateBuildTypeValidatorSettings(descriptor);
+                settings.shouldReport = false;
+                settings.message = "Default validator message.";
+                settings.severity = ReferenceValidationSeverity.Fatal;
+                BuildValidationSettings.instance.SaveSettings();
+                SetBuildTypeValidatorEnabled(validatorType, wasEnabled);
+            }
+        }
+
         static bool ContainsIssue(BuildReferenceValidator.ValidationReport report, string sourcePath, string fieldName, int? collectionIndex = null)
         {
             return FindIssue(report, sourcePath, fieldName, collectionIndex) != null;
@@ -1141,6 +1178,27 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
         protected override BuildValidationResult Validate(BuildTypeExceptionTargetScriptableObject target, BuildTypeValidationContext context)
         {
             throw new InvalidOperationException("Build type validator exception.");
+        }
+    }
+
+    public sealed class BuildTypeSettingsTargetScriptableObject : ScriptableObject
+    {
+    }
+
+    [Serializable]
+    public sealed class SettingsBuildTypeValidatorSettings : BuildTypeValidatorSettings
+    {
+        public bool shouldReport;
+        public string message = "Default validator message.";
+        public ReferenceValidationSeverity severity = ReferenceValidationSeverity.Fatal;
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeSettingsTargetScriptableObject))]
+    public sealed class SettingsBuildTypeValidator : BuildTypeValidator<BuildTypeSettingsTargetScriptableObject, SettingsBuildTypeValidatorSettings>
+    {
+        protected override BuildValidationResult Validate(BuildTypeSettingsTargetScriptableObject target, SettingsBuildTypeValidatorSettings settings, BuildTypeValidationContext context)
+        {
+            return settings.shouldReport ? BuildValidationResult.Issue(settings.severity, settings.message) : BuildValidationResult.Pass();
         }
     }
 }

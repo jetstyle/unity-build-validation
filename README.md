@@ -109,6 +109,37 @@ public sealed class ExampleMapSettingsBuildTypeValidator : BuildTypeValidator<Ex
 
 Multiple validators can target the same type. The object is valid only when all enabled validators pass.
 
+Use `BuildTypeValidator<T, TSettings>` when a validator needs project-level parameters. Settings must be serializable classes derived from `BuildTypeValidatorSettings`:
+
+```csharp
+using System;
+using JetXR.Unity.BuildValidation;
+using JetXR.Unity.BuildValidation.Editor;
+using UnityEngine;
+
+[Serializable]
+public sealed class ExampleMapSettingsValidatorSettings : BuildTypeValidatorSettings
+{
+    public ReferenceValidationSeverity missingPreviewSeverity = ReferenceValidationSeverity.Warning;
+}
+
+[BuildTypeValidator(typeof(ExampleMapSettings))]
+public sealed class ExampleMapSettingsValidator
+    : BuildTypeValidator<ExampleMapSettings, ExampleMapSettingsValidatorSettings>
+{
+    protected override BuildValidationResult Validate(
+        ExampleMapSettings target,
+        ExampleMapSettingsValidatorSettings settings,
+        BuildTypeValidationContext context)
+    {
+        if (target.previewMap == null)
+            return BuildValidationResult.Issue(settings.missingPreviewSeverity, "Preview map is missing.");
+
+        return BuildValidationResult.Pass();
+    }
+}
+```
+
 Use `BuildTypeValidationContext` when one validator needs to report multiple issues:
 
 ```csharp
@@ -129,6 +160,8 @@ Build type validators can be enabled or disabled in:
 ```text
 Project Settings > Build Validation
 ```
+
+Validator settings are opened with the settings button on the right side of the validator row. The expanded/collapsed state is not saved. If a validator is disabled, its settings are hidden from the panel but kept in `ProjectSettings/BuildValidationSettings.asset`.
 
 ## Manual Validation
 
@@ -156,6 +189,8 @@ When `com.unity.timeline` is installed, the built-in `TimelineReferencesValidato
 
 - timeline track bindings shown in the Timeline inspector must be assigned;
 - `[ValidateReferenceSet]` on `ExposedReference<T>` fields inside timeline assets and sub-assets must resolve through the director.
+
+`TimelineReferencesValidator` has project settings for enabling binding checks, enabling exposed reference checks, and choosing the severity for missing timeline bindings.
 
 For each issue, the Unity Console receives a message with the severity, asset or scene path, object path, component or asset type, and the field or method that reported the issue. Console messages use the relevant Unity object as context, so selecting the log entry can ping or select the related asset or object.
 

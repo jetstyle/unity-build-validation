@@ -14,22 +14,34 @@ using Object = UnityEngine.Object;
 
 namespace JetXR.Unity.BuildValidation.Timeline.Editor
 {
+    [Serializable]
+    public sealed class TimelineReferencesValidatorSettings : BuildTypeValidatorSettings
+    {
+        public bool validateBindings = true;
+        public bool validateExposedReferences = true;
+        public ReferenceValidationSeverity missingBindingSeverity = ReferenceValidationSeverity.Fatal;
+    }
+
     [BuildTypeValidator(typeof(PlayableDirector))]
-    public sealed class TimelineReferencesValidator : BuildTypeValidator<PlayableDirector>
+    public sealed class TimelineReferencesValidator : BuildTypeValidator<PlayableDirector, TimelineReferencesValidatorSettings>
     {
         static readonly Dictionary<Type, ValidatedExposedReferenceField[]> FieldCache = new Dictionary<Type, ValidatedExposedReferenceField[]>();
 
-        protected override BuildValidationResult Validate(PlayableDirector target, BuildTypeValidationContext context)
+        protected override BuildValidationResult Validate(PlayableDirector target, TimelineReferencesValidatorSettings settings, BuildTypeValidationContext context)
         {
             if (target.playableAsset == null)
                 return BuildValidationResult.Pass();
 
-            ValidateBindings(target, context);
-            ValidateMarkedExposedReferences(target, context);
+            if (settings.validateBindings)
+                ValidateBindings(target, settings.missingBindingSeverity, context);
+
+            if (settings.validateExposedReferences)
+                ValidateMarkedExposedReferences(target, context);
+
             return BuildValidationResult.Pass();
         }
 
-        static void ValidateBindings(PlayableDirector director, BuildTypeValidationContext context)
+        static void ValidateBindings(PlayableDirector director, ReferenceValidationSeverity missingBindingSeverity, BuildTypeValidationContext context)
         {
             if (!(director.playableAsset is TimelineAsset timelineAsset))
                 return;
@@ -47,7 +59,7 @@ namespace JetXR.Unity.BuildValidation.Timeline.Editor
                     continue;
 
                 string bindingName = string.IsNullOrEmpty(binding.streamName) ? track.name : binding.streamName;
-                context.Fatal($"Timeline binding is not set. Timeline='{timelinePath}', Track='{GetTrackPath(track)}', Binding='{bindingName}', BindingType='{binding.outputTargetType?.FullName}'.");
+                context.Report(missingBindingSeverity, $"Timeline binding is not set. Timeline='{timelinePath}', Track='{GetTrackPath(track)}', Binding='{bindingName}', BindingType='{binding.outputTargetType?.FullName}'.");
             }
         }
 
