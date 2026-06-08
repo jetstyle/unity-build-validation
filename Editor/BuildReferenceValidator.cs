@@ -366,7 +366,16 @@ namespace JetXR.Unity.BuildValidation.Editor
                 BuildValidationResult result;
                 try
                 {
-                    result = descriptor.CreateInstance().Validate(target, context);
+                    IBuildTypeValidator validator = descriptor.CreateInstance();
+                    if (validator is IBuildTypeValidatorWithSettings validatorWithSettings)
+                    {
+                        BuildTypeValidatorSettings settings = BuildValidationSettings.instance.GetOrCreateBuildTypeValidatorSettings(descriptor);
+                        result = validatorWithSettings.Validate(target, context, settings);
+                    }
+                    else
+                    {
+                        result = validator.Validate(target, context);
+                    }
                 }
                 catch (Exception exception)
                 {

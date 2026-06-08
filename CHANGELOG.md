@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.1] - 2026-06-08
+
+- Added class-based settings for `BuildTypeValidator` validators.
+- Added configurable settings for the built-in `TimelineReferencesValidator`.
+
 ## [1.2.0] - 2026-06-08
 
 - Added external `BuildTypeValidator` validators with Project Settings enable/disable controls.

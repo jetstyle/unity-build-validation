@@ -80,18 +80,42 @@ namespace JetXR.Unity.BuildValidation.Editor
             else if (validatorType.GetConstructor(Type.EmptyTypes) == null)
                 error = "Validator type must have a public parameterless constructor.";
 
-            return new BuildTypeValidatorDescriptor(id, validatorType, attribute.TargetType, attribute.UseForChildren, error);
+            Type settingsType = GetSettingsType(validatorType);
+            if (error == null && settingsType != null)
+            {
+                if (settingsType.IsAbstract)
+                    error = "Validator settings type is abstract.";
+                else if (settingsType.GetConstructor(Type.EmptyTypes) == null)
+                    error = "Validator settings type must have a public parameterless constructor.";
+            }
+
+            return new BuildTypeValidatorDescriptor(id, validatorType, attribute.TargetType, attribute.UseForChildren, settingsType, error);
+        }
+
+        static Type GetSettingsType(Type validatorType)
+        {
+            for (Type currentType = validatorType; currentType != null; currentType = currentType.BaseType)
+            {
+                if (!currentType.IsGenericType || currentType.GetGenericTypeDefinition() != typeof(BuildTypeValidator<,>))
+                    continue;
+
+                Type settingsType = currentType.GetGenericArguments()[1];
+                return typeof(BuildTypeValidatorSettings).IsAssignableFrom(settingsType) ? settingsType : null;
+            }
+
+            return null;
         }
     }
 
     public sealed class BuildTypeValidatorDescriptor
     {
-        public BuildTypeValidatorDescriptor(string id, Type validatorType, Type targetType, bool useForChildren, string validationError)
+        public BuildTypeValidatorDescriptor(string id, Type validatorType, Type targetType, bool useForChildren, Type settingsType, string validationError)
         {
             Id = id;
             ValidatorType = validatorType;
             TargetType = targetType;
             UseForChildren = useForChildren;
+            SettingsType = settingsType;
             ValidationError = validationError;
         }
 
@@ -99,8 +123,10 @@ namespace JetXR.Unity.BuildValidation.Editor
         public Type ValidatorType { get; }
         public Type TargetType { get; }
         public bool UseForChildren { get; }
+        public Type SettingsType { get; }
         public string ValidationError { get; }
         public bool IsValid => string.IsNullOrEmpty(ValidationError);
+        public bool HasSettings => SettingsType != null;
 
         public IBuildTypeValidator CreateInstance()
         {
