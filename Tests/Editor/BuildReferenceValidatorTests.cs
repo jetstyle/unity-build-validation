@@ -5,12 +5,14 @@ using System;
 using System.Collections.Generic;
 using JetXR.Unity.BuildValidation;
 using JetXR.Unity.BuildValidation.Editor;
+using JetXR.Unity.BuildValidation.Timeline.Editor;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Playables;
 using UnityEngine.SceneManagement;
+using UnityEngine.Timeline;
 using Object = UnityEngine.Object;
 
 namespace JetXR.Unity.BuildValidation.Tests.Editor
@@ -340,12 +342,11 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
 
                 BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
 
-                BuildReferenceValidator.ValidationIssue issue = FindIssue(report, assetPath, nameof(ValidatorExposedReferencePlayableAsset.targetTransform));
+                BuildReferenceValidator.ValidationIssue issue = FindTimelineValidatorIssue(report, scenePath);
                 Assert.That(issue, Is.Not.Null);
                 Assert.That(issue.Context, Is.EqualTo(director));
-                Assert.That(issue.ResolverSource, Does.Contain(scenePath));
-                Assert.That(issue.ResolverSource, Does.Contain("Director"));
-                Assert.That(issue.ToString(), Does.Contain("Resolver='"));
+                Assert.That(issue.Message, Does.Contain(assetPath));
+                Assert.That(issue.Message, Does.Contain(nameof(ValidatorExposedReferencePlayableAsset.targetTransform)));
             }
             finally
             {
@@ -376,7 +377,7 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
 
                 BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
 
-                Assert.That(ContainsIssue(report, assetPath, nameof(ValidatorExposedReferencePlayableAsset.targetTransform)), Is.False);
+                Assert.That(ContainsTimelineValidatorIssue(report, scenePath), Is.False);
             }
             finally
             {
@@ -410,9 +411,103 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
 
                 BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
 
-                Assert.That(CountFieldIssues(report, nameof(ValidatorExposedReferencePlayableAsset.targetTransform)), Is.EqualTo(1));
-                BuildReferenceValidator.ValidationIssue issue = FindIssue(report, assetPath, nameof(ValidatorExposedReferencePlayableAsset.targetTransform));
+                Assert.That(CountTimelineValidatorIssues(report), Is.EqualTo(1));
+                BuildReferenceValidator.ValidationIssue issue = FindTimelineValidatorIssue(report, scenePath);
                 Assert.That(issue.Context, Is.EqualTo(secondDirector));
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = previousScenes;
+            }
+        }
+
+        [Test]
+        public void TimelineReferencesValidatorReportsMultipleMissingExposedReferences()
+        {
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            var directorObject = new GameObject("Director");
+            PlayableDirector director = directorObject.AddComponent<PlayableDirector>();
+            var asset = ScriptableObject.CreateInstance<ValidatorMultipleExposedReferencesPlayableAsset>();
+            asset.firstTarget.exposedName = "firstTarget";
+            asset.secondTarget.exposedName = "secondTarget";
+            string assetPath = $"{TestRoot}/MultipleExposedReferences.playable";
+            AssetDatabase.CreateAsset(asset, assetPath);
+            director.playableAsset = asset;
+            string scenePath = $"{TestRoot}/MultipleExposedReferences.unity";
+            EditorSceneManager.SaveScene(scene, scenePath);
+
+            EditorBuildSettingsScene[] previousScenes = EditorBuildSettings.scenes;
+            try
+            {
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, enabled: true) };
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(CountTimelineValidatorIssues(report), Is.EqualTo(2));
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = previousScenes;
+            }
+        }
+
+        [Test]
+        public void PlayableDirectorMissingTimelineBindingReportsFatal()
+        {
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            var directorObject = new GameObject("Director");
+            PlayableDirector director = directorObject.AddComponent<PlayableDirector>();
+            TimelineAsset timeline = ScriptableObject.CreateInstance<TimelineAsset>();
+            timeline.CreateTrack<AnimationTrack>(null, "Animation Track");
+            string assetPath = $"{TestRoot}/MissingTimelineBinding.playable";
+            AssetDatabase.CreateAsset(timeline, assetPath);
+            director.playableAsset = timeline;
+            string scenePath = $"{TestRoot}/MissingTimelineBinding.unity";
+            EditorSceneManager.SaveScene(scene, scenePath);
+
+            EditorBuildSettingsScene[] previousScenes = EditorBuildSettings.scenes;
+            try
+            {
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, enabled: true) };
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                BuildReferenceValidator.ValidationIssue issue = FindTimelineValidatorIssue(report, scenePath);
+                Assert.That(issue, Is.Not.Null);
+                Assert.That(issue.Severity, Is.EqualTo(ReferenceValidationSeverity.Fatal));
+                Assert.That(issue.Message, Does.Contain(assetPath));
+                Assert.That(issue.Message, Does.Contain("Animation Track"));
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = previousScenes;
+            }
+        }
+
+        [Test]
+        public void PlayableDirectorFilledTimelineBindingPasses()
+        {
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            var directorObject = new GameObject("Director");
+            PlayableDirector director = directorObject.AddComponent<PlayableDirector>();
+            Animator animator = new GameObject("Animator").AddComponent<Animator>();
+            TimelineAsset timeline = ScriptableObject.CreateInstance<TimelineAsset>();
+            TrackAsset track = timeline.CreateTrack<AnimationTrack>(null, "Animation Track");
+            string assetPath = $"{TestRoot}/FilledTimelineBinding.playable";
+            AssetDatabase.CreateAsset(timeline, assetPath);
+            director.playableAsset = timeline;
+            director.SetGenericBinding(track, animator);
+            string scenePath = $"{TestRoot}/FilledTimelineBinding.unity";
+            EditorSceneManager.SaveScene(scene, scenePath);
+
+            EditorBuildSettingsScene[] previousScenes = EditorBuildSettings.scenes;
+            try
+            {
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, enabled: true) };
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(ContainsTimelineValidatorIssue(report, scenePath), Is.False);
             }
             finally
             {
@@ -703,6 +798,16 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
             return FindValidatorIssue(report, sourcePath, validatorType) != null;
         }
 
+        static bool ContainsTimelineValidatorIssue(BuildReferenceValidator.ValidationReport report, string sourcePath)
+        {
+            return FindTimelineValidatorIssue(report, sourcePath) != null;
+        }
+
+        static BuildReferenceValidator.ValidationIssue FindTimelineValidatorIssue(BuildReferenceValidator.ValidationReport report, string sourcePath)
+        {
+            return FindValidatorIssue(report, sourcePath, typeof(TimelineReferencesValidator));
+        }
+
         static BuildReferenceValidator.ValidationIssue FindValidatorIssue(BuildReferenceValidator.ValidationReport report, string sourcePath, Type validatorType)
         {
             foreach (BuildReferenceValidator.ValidationIssue issue in report.Issues)
@@ -712,6 +817,18 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
             }
 
             return null;
+        }
+
+        static int CountTimelineValidatorIssues(BuildReferenceValidator.ValidationReport report)
+        {
+            int count = 0;
+            foreach (BuildReferenceValidator.ValidationIssue issue in report.Issues)
+            {
+                if (issue.ValidatorName == typeof(TimelineReferencesValidator).FullName)
+                    count++;
+            }
+
+            return count;
         }
 
         static bool SetBuildTypeValidatorEnabled(Type validatorType, bool enabled)
@@ -859,6 +976,20 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
     {
         [ValidateReferenceSet]
         public ExposedReference<Transform> targetTransform;
+
+        public override Playable CreatePlayable(PlayableGraph graph, GameObject owner)
+        {
+            return Playable.Null;
+        }
+    }
+
+    public sealed class ValidatorMultipleExposedReferencesPlayableAsset : PlayableAsset
+    {
+        [ValidateReferenceSet]
+        public ExposedReference<Transform> firstTarget;
+
+        [ValidateReferenceSet]
+        public ExposedReference<Transform> secondTarget;
 
         public override Playable CreatePlayable(PlayableGraph graph, GameObject owner)
         {

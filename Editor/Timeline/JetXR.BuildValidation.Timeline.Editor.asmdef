@@ -1,0 +1,28 @@
+{
+    "name": "JetXR.Unity.BuildValidation.Timeline.Editor",
+    "rootNamespace": "JetXR.Unity.BuildValidation.Timeline.Editor",
+    "references": [
+        "JetXR.Unity.BuildValidation",
+        "JetXR.Unity.BuildValidation.Editor",
+        "Unity.Timeline"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "JETXR_BUILD_VALIDATION_TIMELINE"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.timeline",
+            "expression": "",
+            "define": "JETXR_BUILD_VALIDATION_TIMELINE"
+        }
+    ],
+    "noEngineReferences": false
+}

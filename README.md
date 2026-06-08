@@ -60,7 +60,7 @@ public List<GameObject> prefabs;
 
 Fields must be serialized by Unity. Public fields and private fields with `[SerializeField]` are supported. Static fields and non-serialized fields are ignored.
 
-`ExposedReference<T>` fields are supported when `T` is a Unity object type. BuildValidation resolves them through an `IExposedPropertyTable` context. In scenes this commonly comes from `PlayableDirector`. Standalone assets without a resolver context are not failed for unresolved exposed references.
+Direct `ExposedReference<T>` fields are not checked by the base reference validator. If `com.unity.timeline` is installed, the package adds a built-in `TimelineReferencesValidator` that checks timeline references through `PlayableDirector`.
 
 Use `[ValidateInvoke]` when validation logic needs code:
 
@@ -109,6 +109,21 @@ public sealed class ExampleMapSettingsBuildTypeValidator : BuildTypeValidator<Ex
 
 Multiple validators can target the same type. The object is valid only when all enabled validators pass.
 
+Use `BuildTypeValidationContext` when one validator needs to report multiple issues:
+
+```csharp
+protected override BuildValidationResult Validate(ExampleMapSettings target, BuildTypeValidationContext context)
+{
+    if (target.requiredMap == null)
+        context.Fatal("Required map is missing.");
+
+    if (target.previewMap == null)
+        context.Warning("Preview map is missing.");
+
+    return BuildValidationResult.Pass();
+}
+```
+
 Build type validators can be enabled or disabled in:
 
 ```text
@@ -135,8 +150,12 @@ BuildValidation checks:
 - ScriptableObject assets included through build dependencies;
 - other serialized Unity object assets included through build dependencies;
 - assets under `Resources`, even when they are not referenced by a scene.
-- `ExposedReference<T>` fields in playable assets used by `PlayableDirector` components in checked scenes.
 - enabled `BuildTypeValidator` validators for every checked Unity object with a matching type.
+
+When `com.unity.timeline` is installed, the built-in `TimelineReferencesValidator` also checks `PlayableDirector` components:
+
+- timeline track bindings shown in the Timeline inspector must be assigned;
+- `[ValidateReferenceSet]` on `ExposedReference<T>` fields inside timeline assets and sub-assets must resolve through the director.
 
 For each issue, the Unity Console receives a message with the severity, asset or scene path, object path, component or asset type, and the field or method that reported the issue. Console messages use the relevant Unity object as context, so selecting the log entry can ping or select the related asset or object.
 

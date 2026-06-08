@@ -3,6 +3,8 @@
 ## [1.2.0] - 2026-06-08
 
 - Added external `BuildTypeValidator` validators with Project Settings enable/disable controls.
+- Added built-in `TimelineReferencesValidator` for Timeline bindings and marked `ExposedReference<T>` fields when `com.unity.timeline` is installed.
+- Added multi-issue reporting through `BuildTypeValidationContext`.
 
 ## [1.1.1] - 2026-06-05
 
