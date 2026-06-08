@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.0] - 2026-06-08
+
+- Added external `BuildTypeValidator` validators with Project Settings enable/disable controls.
+
 ## [1.1.1] - 2026-06-05
 
 - Fixed `ExposedReference<T>` validation messages to include the resolver source.

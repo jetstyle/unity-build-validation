@@ -85,6 +85,36 @@ public sealed class ExampleMapSettings : MonoBehaviour
 
 Methods marked with `[ValidateInvoke]` must be instance methods without parameters and must return `BuildValidationResult`. They can be public, protected, or private. BuildValidation calls these methods explicitly before the build; Unity runtime lifecycle methods such as `Awake`, `Start`, and `OnEnable` are not part of the validation contract.
 
+Use `BuildTypeValidator` when validation logic should live in an editor-only script and apply to every object of a specific Unity type:
+
+```csharp
+using JetXR.Unity.BuildValidation;
+using JetXR.Unity.BuildValidation.Editor;
+using UnityEngine;
+
+[BuildTypeValidator(typeof(ExampleMapSettings))]
+public sealed class ExampleMapSettingsBuildTypeValidator : BuildTypeValidator<ExampleMapSettings>
+{
+    protected override BuildValidationResult Validate(ExampleMapSettings target, BuildTypeValidationContext context)
+    {
+        if (target.requiredMap == null)
+            return BuildValidationResult.Fatal("Required map is missing.");
+
+        return BuildValidationResult.Pass();
+    }
+}
+```
+
+`BuildTypeValidator` classes must be in editor assemblies. The attribute binds a validator to the target type. Passing `useForChildren: true` also applies the validator to derived Unity object types.
+
+Multiple validators can target the same type. The object is valid only when all enabled validators pass.
+
+Build type validators can be enabled or disabled in:
+
+```text
+Project Settings > Build Validation
+```
+
 ## Manual Validation
 
 Run validation without starting a build from:
@@ -106,6 +136,7 @@ BuildValidation checks:
 - other serialized Unity object assets included through build dependencies;
 - assets under `Resources`, even when they are not referenced by a scene.
 - `ExposedReference<T>` fields in playable assets used by `PlayableDirector` components in checked scenes.
+- enabled `BuildTypeValidator` validators for every checked Unity object with a matching type.
 
 For each issue, the Unity Console receives a message with the severity, asset or scene path, object path, component or asset type, and the field or method that reported the issue. Console messages use the relevant Unity object as context, so selecting the log entry can ping or select the related asset or object.
 
@@ -120,3 +151,5 @@ Severity controls the build result:
 Array and `List<T>` fields are checked per element. Empty arrays and lists are valid. Null elements are reported with their element index.
 
 Invalid `[ValidateInvoke]` method signatures and exceptions thrown by validation methods are reported as `Fatal`.
+
+Invalid `BuildTypeValidator` definitions and exceptions thrown by build type validators are reported as `Fatal`.
