@@ -1,15 +1,19 @@
 // Copyright (c) 2026 JetXR
 // Licensed under the MIT License.
 
+using System;
 using System.Collections.Generic;
 using JetXR.Unity.BuildValidation;
 using JetXR.Unity.BuildValidation.Editor;
+using JetXR.Unity.BuildValidation.Timeline.Editor;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Playables;
 using UnityEngine.SceneManagement;
+using UnityEngine.Timeline;
+using Object = UnityEngine.Object;
 
 namespace JetXR.Unity.BuildValidation.Tests.Editor
 {
@@ -338,12 +342,11 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
 
                 BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
 
-                BuildReferenceValidator.ValidationIssue issue = FindIssue(report, assetPath, nameof(ValidatorExposedReferencePlayableAsset.targetTransform));
+                BuildReferenceValidator.ValidationIssue issue = FindTimelineValidatorIssue(report, scenePath);
                 Assert.That(issue, Is.Not.Null);
                 Assert.That(issue.Context, Is.EqualTo(director));
-                Assert.That(issue.ResolverSource, Does.Contain(scenePath));
-                Assert.That(issue.ResolverSource, Does.Contain("Director"));
-                Assert.That(issue.ToString(), Does.Contain("Resolver='"));
+                Assert.That(issue.Message, Does.Contain(assetPath));
+                Assert.That(issue.Message, Does.Contain(nameof(ValidatorExposedReferencePlayableAsset.targetTransform)));
             }
             finally
             {
@@ -374,7 +377,7 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
 
                 BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
 
-                Assert.That(ContainsIssue(report, assetPath, nameof(ValidatorExposedReferencePlayableAsset.targetTransform)), Is.False);
+                Assert.That(ContainsTimelineValidatorIssue(report, scenePath), Is.False);
             }
             finally
             {
@@ -408,13 +411,329 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
 
                 BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
 
-                Assert.That(CountFieldIssues(report, nameof(ValidatorExposedReferencePlayableAsset.targetTransform)), Is.EqualTo(1));
-                BuildReferenceValidator.ValidationIssue issue = FindIssue(report, assetPath, nameof(ValidatorExposedReferencePlayableAsset.targetTransform));
+                Assert.That(CountTimelineValidatorIssues(report), Is.EqualTo(1));
+                BuildReferenceValidator.ValidationIssue issue = FindTimelineValidatorIssue(report, scenePath);
                 Assert.That(issue.Context, Is.EqualTo(secondDirector));
             }
             finally
             {
                 EditorBuildSettings.scenes = previousScenes;
+            }
+        }
+
+        [Test]
+        public void TimelineReferencesValidatorReportsMultipleMissingExposedReferences()
+        {
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            var directorObject = new GameObject("Director");
+            PlayableDirector director = directorObject.AddComponent<PlayableDirector>();
+            var asset = ScriptableObject.CreateInstance<ValidatorMultipleExposedReferencesPlayableAsset>();
+            asset.firstTarget.exposedName = "firstTarget";
+            asset.secondTarget.exposedName = "secondTarget";
+            string assetPath = $"{TestRoot}/MultipleExposedReferences.playable";
+            AssetDatabase.CreateAsset(asset, assetPath);
+            director.playableAsset = asset;
+            string scenePath = $"{TestRoot}/MultipleExposedReferences.unity";
+            EditorSceneManager.SaveScene(scene, scenePath);
+
+            EditorBuildSettingsScene[] previousScenes = EditorBuildSettings.scenes;
+            try
+            {
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, enabled: true) };
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(CountTimelineValidatorIssues(report), Is.EqualTo(2));
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = previousScenes;
+            }
+        }
+
+        [Test]
+        public void PlayableDirectorMissingTimelineBindingReportsFatal()
+        {
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            var directorObject = new GameObject("Director");
+            PlayableDirector director = directorObject.AddComponent<PlayableDirector>();
+            TimelineAsset timeline = ScriptableObject.CreateInstance<TimelineAsset>();
+            timeline.CreateTrack<AnimationTrack>(null, "Animation Track");
+            string assetPath = $"{TestRoot}/MissingTimelineBinding.playable";
+            AssetDatabase.CreateAsset(timeline, assetPath);
+            director.playableAsset = timeline;
+            string scenePath = $"{TestRoot}/MissingTimelineBinding.unity";
+            EditorSceneManager.SaveScene(scene, scenePath);
+
+            EditorBuildSettingsScene[] previousScenes = EditorBuildSettings.scenes;
+            try
+            {
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, enabled: true) };
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                BuildReferenceValidator.ValidationIssue issue = FindTimelineValidatorIssue(report, scenePath);
+                Assert.That(issue, Is.Not.Null);
+                Assert.That(issue.Severity, Is.EqualTo(ReferenceValidationSeverity.Fatal));
+                Assert.That(issue.Message, Does.Contain(assetPath));
+                Assert.That(issue.Message, Does.Contain("Animation Track"));
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = previousScenes;
+            }
+        }
+
+        [Test]
+        public void PlayableDirectorFilledTimelineBindingPasses()
+        {
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            var directorObject = new GameObject("Director");
+            PlayableDirector director = directorObject.AddComponent<PlayableDirector>();
+            Animator animator = new GameObject("Animator").AddComponent<Animator>();
+            TimelineAsset timeline = ScriptableObject.CreateInstance<TimelineAsset>();
+            TrackAsset track = timeline.CreateTrack<AnimationTrack>(null, "Animation Track");
+            string assetPath = $"{TestRoot}/FilledTimelineBinding.playable";
+            AssetDatabase.CreateAsset(timeline, assetPath);
+            director.playableAsset = timeline;
+            director.SetGenericBinding(track, animator);
+            string scenePath = $"{TestRoot}/FilledTimelineBinding.unity";
+            EditorSceneManager.SaveScene(scene, scenePath);
+
+            EditorBuildSettingsScene[] previousScenes = EditorBuildSettings.scenes;
+            try
+            {
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, enabled: true) };
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(ContainsTimelineValidatorIssue(report, scenePath), Is.False);
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = previousScenes;
+            }
+        }
+
+        [Test]
+        public void BuildTypeValidatorForExactTypeRuns()
+        {
+            Type validatorType = typeof(ExactBuildTypeValidator);
+            bool wasEnabled = SetBuildTypeValidatorEnabled(validatorType, enabled: true);
+            try
+            {
+                var asset = ScriptableObject.CreateInstance<BuildTypeExactTargetScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypeExactTarget.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(ContainsValidatorIssue(report, assetPath, validatorType), Is.True);
+            }
+            finally
+            {
+                SetBuildTypeValidatorEnabled(validatorType, wasEnabled);
+            }
+        }
+
+        [Test]
+        public void MultipleBuildTypeValidatorsForSameTypeAllRun()
+        {
+            Type firstValidatorType = typeof(FirstMultipleBuildTypeValidator);
+            Type secondValidatorType = typeof(SecondMultipleBuildTypeValidator);
+            bool firstWasEnabled = SetBuildTypeValidatorEnabled(firstValidatorType, enabled: true);
+            bool secondWasEnabled = SetBuildTypeValidatorEnabled(secondValidatorType, enabled: true);
+            try
+            {
+                var asset = ScriptableObject.CreateInstance<BuildTypeMultipleTargetScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypeMultipleTarget.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(ContainsValidatorIssue(report, assetPath, firstValidatorType), Is.True);
+                Assert.That(ContainsValidatorIssue(report, assetPath, secondValidatorType), Is.True);
+            }
+            finally
+            {
+                SetBuildTypeValidatorEnabled(firstValidatorType, firstWasEnabled);
+                SetBuildTypeValidatorEnabled(secondValidatorType, secondWasEnabled);
+            }
+        }
+
+        [Test]
+        public void BuildTypeValidatorPassDoesNotCreateIssue()
+        {
+            Type validatorType = typeof(PassBuildTypeValidator);
+            bool wasEnabled = SetBuildTypeValidatorEnabled(validatorType, enabled: true);
+            try
+            {
+                var asset = ScriptableObject.CreateInstance<BuildTypePassTargetScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypePassTarget.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(ContainsValidatorIssue(report, assetPath, validatorType), Is.False);
+            }
+            finally
+            {
+                SetBuildTypeValidatorEnabled(validatorType, wasEnabled);
+            }
+        }
+
+        [Test]
+        public void BuildTypeValidatorInfoDoesNotIncrementSummaryOrFatalCount()
+        {
+            Type validatorType = typeof(InfoBuildTypeValidator);
+            bool wasEnabled = SetBuildTypeValidatorEnabled(validatorType, enabled: true);
+            try
+            {
+                var asset = ScriptableObject.CreateInstance<BuildTypeInfoTargetScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypeInfoTarget.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(report.FatalCount, Is.Zero);
+                Assert.That(report.SummaryIssueCount, Is.Zero);
+                Assert.That(ContainsValidatorIssue(report, assetPath, validatorType), Is.True);
+            }
+            finally
+            {
+                SetBuildTypeValidatorEnabled(validatorType, wasEnabled);
+            }
+        }
+
+        [Test]
+        public void BuildTypeValidatorWarningIncrementsSummaryOnly()
+        {
+            Type validatorType = typeof(WarningBuildTypeValidator);
+            bool wasEnabled = SetBuildTypeValidatorEnabled(validatorType, enabled: true);
+            try
+            {
+                var asset = ScriptableObject.CreateInstance<BuildTypeWarningTargetScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypeWarningTarget.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(report.FatalCount, Is.Zero);
+                Assert.That(report.SummaryIssueCount, Is.GreaterThanOrEqualTo(1));
+                Assert.That(ContainsValidatorIssue(report, assetPath, validatorType), Is.True);
+            }
+            finally
+            {
+                SetBuildTypeValidatorEnabled(validatorType, wasEnabled);
+            }
+        }
+
+        [Test]
+        public void BuildTypeValidatorFatalIncrementsSummaryAndFatal()
+        {
+            Type validatorType = typeof(FatalBuildTypeValidator);
+            bool wasEnabled = SetBuildTypeValidatorEnabled(validatorType, enabled: true);
+            try
+            {
+                var asset = ScriptableObject.CreateInstance<BuildTypeFatalTargetScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypeFatalTarget.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(report.FatalCount, Is.GreaterThanOrEqualTo(1));
+                Assert.That(report.SummaryIssueCount, Is.GreaterThanOrEqualTo(1));
+                Assert.That(ContainsValidatorIssue(report, assetPath, validatorType), Is.True);
+            }
+            finally
+            {
+                SetBuildTypeValidatorEnabled(validatorType, wasEnabled);
+            }
+        }
+
+        [Test]
+        public void DisabledBuildTypeValidatorDoesNotRun()
+        {
+            Type validatorType = typeof(DisabledBuildTypeValidator);
+            bool wasEnabled = SetBuildTypeValidatorEnabled(validatorType, enabled: false);
+            try
+            {
+                var asset = ScriptableObject.CreateInstance<BuildTypeDisabledTargetScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypeDisabledTarget.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(ContainsValidatorIssue(report, assetPath, validatorType), Is.False);
+            }
+            finally
+            {
+                SetBuildTypeValidatorEnabled(validatorType, wasEnabled);
+            }
+        }
+
+        [Test]
+        public void BuildTypeValidatorUseForChildrenAppliesToDerivedType()
+        {
+            Type validatorType = typeof(ChildrenBuildTypeValidator);
+            bool wasEnabled = SetBuildTypeValidatorEnabled(validatorType, enabled: true);
+            try
+            {
+                var asset = ScriptableObject.CreateInstance<BuildTypeChildrenDerivedScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypeChildrenDerived.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(ContainsValidatorIssue(report, assetPath, validatorType), Is.True);
+            }
+            finally
+            {
+                SetBuildTypeValidatorEnabled(validatorType, wasEnabled);
+            }
+        }
+
+        [Test]
+        public void BuildTypeValidatorUseForChildrenFalseDoesNotApplyToDerivedType()
+        {
+            Type validatorType = typeof(NoChildrenBuildTypeValidator);
+            bool wasEnabled = SetBuildTypeValidatorEnabled(validatorType, enabled: true);
+            try
+            {
+                var asset = ScriptableObject.CreateInstance<BuildTypeNoChildrenDerivedScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypeNoChildrenDerived.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(ContainsValidatorIssue(report, assetPath, validatorType), Is.False);
+            }
+            finally
+            {
+                SetBuildTypeValidatorEnabled(validatorType, wasEnabled);
+            }
+        }
+
+        [Test]
+        public void BuildTypeValidatorExceptionReportsFatal()
+        {
+            Type validatorType = typeof(ExceptionBuildTypeValidator);
+            bool wasEnabled = SetBuildTypeValidatorEnabled(validatorType, enabled: true);
+            try
+            {
+                var asset = ScriptableObject.CreateInstance<BuildTypeExceptionTargetScriptableObject>();
+                string assetPath = $"{ResourcesRoot}/BuildTypeExceptionTarget.asset";
+                AssetDatabase.CreateAsset(asset, assetPath);
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                BuildReferenceValidator.ValidationIssue issue = FindValidatorIssue(report, assetPath, validatorType);
+                Assert.That(issue, Is.Not.Null);
+                Assert.That(issue.Severity, Is.EqualTo(ReferenceValidationSeverity.Fatal));
+            }
+            finally
+            {
+                SetBuildTypeValidatorEnabled(validatorType, wasEnabled);
             }
         }
 
@@ -472,6 +791,65 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
             }
 
             return count;
+        }
+
+        static bool ContainsValidatorIssue(BuildReferenceValidator.ValidationReport report, string sourcePath, Type validatorType)
+        {
+            return FindValidatorIssue(report, sourcePath, validatorType) != null;
+        }
+
+        static bool ContainsTimelineValidatorIssue(BuildReferenceValidator.ValidationReport report, string sourcePath)
+        {
+            return FindTimelineValidatorIssue(report, sourcePath) != null;
+        }
+
+        static BuildReferenceValidator.ValidationIssue FindTimelineValidatorIssue(BuildReferenceValidator.ValidationReport report, string sourcePath)
+        {
+            return FindValidatorIssue(report, sourcePath, typeof(TimelineReferencesValidator));
+        }
+
+        static BuildReferenceValidator.ValidationIssue FindValidatorIssue(BuildReferenceValidator.ValidationReport report, string sourcePath, Type validatorType)
+        {
+            foreach (BuildReferenceValidator.ValidationIssue issue in report.Issues)
+            {
+                if (issue.SourcePath == sourcePath && issue.ValidatorName == validatorType.FullName)
+                    return issue;
+            }
+
+            return null;
+        }
+
+        static int CountTimelineValidatorIssues(BuildReferenceValidator.ValidationReport report)
+        {
+            int count = 0;
+            foreach (BuildReferenceValidator.ValidationIssue issue in report.Issues)
+            {
+                if (issue.ValidatorName == typeof(TimelineReferencesValidator).FullName)
+                    count++;
+            }
+
+            return count;
+        }
+
+        static bool SetBuildTypeValidatorEnabled(Type validatorType, bool enabled)
+        {
+            BuildTypeValidatorDescriptor descriptor = FindBuildTypeValidatorDescriptor(validatorType);
+            bool wasEnabled = BuildValidationSettings.instance.IsBuildTypeValidatorEnabled(descriptor.Id);
+            BuildValidationSettings.instance.SetBuildTypeValidatorEnabled(descriptor.Id, enabled);
+            return wasEnabled;
+        }
+
+        static BuildTypeValidatorDescriptor FindBuildTypeValidatorDescriptor(Type validatorType)
+        {
+            BuildTypeValidatorRegistry.Refresh();
+            foreach (BuildTypeValidatorDescriptor descriptor in BuildTypeValidatorRegistry.Descriptors)
+            {
+                if (descriptor.ValidatorType == validatorType)
+                    return descriptor;
+            }
+
+            Assert.Fail($"Build type validator descriptor was not found for {validatorType.FullName}.");
+            return null;
         }
 
         static void CreateFolderIfMissing(string parentFolder, string folderName)
@@ -602,6 +980,167 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
         public override Playable CreatePlayable(PlayableGraph graph, GameObject owner)
         {
             return Playable.Null;
+        }
+    }
+
+    public sealed class ValidatorMultipleExposedReferencesPlayableAsset : PlayableAsset
+    {
+        [ValidateReferenceSet]
+        public ExposedReference<Transform> firstTarget;
+
+        [ValidateReferenceSet]
+        public ExposedReference<Transform> secondTarget;
+
+        public override Playable CreatePlayable(PlayableGraph graph, GameObject owner)
+        {
+            return Playable.Null;
+        }
+    }
+
+    public sealed class BuildTypeExactTargetScriptableObject : ScriptableObject
+    {
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeExactTargetScriptableObject))]
+    public sealed class ExactBuildTypeValidator : BuildTypeValidator<BuildTypeExactTargetScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypeExactTargetScriptableObject target, BuildTypeValidationContext context)
+        {
+            return BuildValidationResult.Warning("Exact build type validator ran.");
+        }
+    }
+
+    public sealed class BuildTypeMultipleTargetScriptableObject : ScriptableObject
+    {
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeMultipleTargetScriptableObject))]
+    public sealed class FirstMultipleBuildTypeValidator : BuildTypeValidator<BuildTypeMultipleTargetScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypeMultipleTargetScriptableObject target, BuildTypeValidationContext context)
+        {
+            return BuildValidationResult.Warning("First build type validator ran.");
+        }
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeMultipleTargetScriptableObject))]
+    public sealed class SecondMultipleBuildTypeValidator : BuildTypeValidator<BuildTypeMultipleTargetScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypeMultipleTargetScriptableObject target, BuildTypeValidationContext context)
+        {
+            return BuildValidationResult.Warning("Second build type validator ran.");
+        }
+    }
+
+    public sealed class BuildTypeInfoTargetScriptableObject : ScriptableObject
+    {
+    }
+
+    public sealed class BuildTypePassTargetScriptableObject : ScriptableObject
+    {
+    }
+
+    [BuildTypeValidator(typeof(BuildTypePassTargetScriptableObject))]
+    public sealed class PassBuildTypeValidator : BuildTypeValidator<BuildTypePassTargetScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypePassTargetScriptableObject target, BuildTypeValidationContext context)
+        {
+            return BuildValidationResult.Pass();
+        }
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeInfoTargetScriptableObject))]
+    public sealed class InfoBuildTypeValidator : BuildTypeValidator<BuildTypeInfoTargetScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypeInfoTargetScriptableObject target, BuildTypeValidationContext context)
+        {
+            return BuildValidationResult.Info("Info build type validator ran.");
+        }
+    }
+
+    public sealed class BuildTypeWarningTargetScriptableObject : ScriptableObject
+    {
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeWarningTargetScriptableObject))]
+    public sealed class WarningBuildTypeValidator : BuildTypeValidator<BuildTypeWarningTargetScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypeWarningTargetScriptableObject target, BuildTypeValidationContext context)
+        {
+            return BuildValidationResult.Warning("Warning build type validator ran.");
+        }
+    }
+
+    public sealed class BuildTypeFatalTargetScriptableObject : ScriptableObject
+    {
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeFatalTargetScriptableObject))]
+    public sealed class FatalBuildTypeValidator : BuildTypeValidator<BuildTypeFatalTargetScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypeFatalTargetScriptableObject target, BuildTypeValidationContext context)
+        {
+            return BuildValidationResult.Fatal("Fatal build type validator ran.");
+        }
+    }
+
+    public sealed class BuildTypeDisabledTargetScriptableObject : ScriptableObject
+    {
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeDisabledTargetScriptableObject))]
+    public sealed class DisabledBuildTypeValidator : BuildTypeValidator<BuildTypeDisabledTargetScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypeDisabledTargetScriptableObject target, BuildTypeValidationContext context)
+        {
+            return BuildValidationResult.Fatal("Disabled build type validator should not run.");
+        }
+    }
+
+    public class BuildTypeChildrenBaseScriptableObject : ScriptableObject
+    {
+    }
+
+    public sealed class BuildTypeChildrenDerivedScriptableObject : BuildTypeChildrenBaseScriptableObject
+    {
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeChildrenBaseScriptableObject), useForChildren: true)]
+    public sealed class ChildrenBuildTypeValidator : BuildTypeValidator<BuildTypeChildrenBaseScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypeChildrenBaseScriptableObject target, BuildTypeValidationContext context)
+        {
+            return BuildValidationResult.Warning("Children build type validator ran.");
+        }
+    }
+
+    public class BuildTypeNoChildrenBaseScriptableObject : ScriptableObject
+    {
+    }
+
+    public sealed class BuildTypeNoChildrenDerivedScriptableObject : BuildTypeNoChildrenBaseScriptableObject
+    {
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeNoChildrenBaseScriptableObject))]
+    public sealed class NoChildrenBuildTypeValidator : BuildTypeValidator<BuildTypeNoChildrenBaseScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypeNoChildrenBaseScriptableObject target, BuildTypeValidationContext context)
+        {
+            return BuildValidationResult.Warning("No-children build type validator should not run for derived type.");
+        }
+    }
+
+    public sealed class BuildTypeExceptionTargetScriptableObject : ScriptableObject
+    {
+    }
+
+    [BuildTypeValidator(typeof(BuildTypeExceptionTargetScriptableObject))]
+    public sealed class ExceptionBuildTypeValidator : BuildTypeValidator<BuildTypeExceptionTargetScriptableObject>
+    {
+        protected override BuildValidationResult Validate(BuildTypeExceptionTargetScriptableObject target, BuildTypeValidationContext context)
+        {
+            throw new InvalidOperationException("Build type validator exception.");
         }
     }
 }

@@ -3,7 +3,9 @@
     "rootNamespace": "JetXR.Unity.BuildValidation.Tests.Editor",
     "references": [
         "JetXR.Unity.BuildValidation",
-        "JetXR.Unity.BuildValidation.Editor"
+        "JetXR.Unity.BuildValidation.Editor",
+        "JetXR.Unity.BuildValidation.Timeline.Editor",
+        "Unity.Timeline"
     ],
     "includePlatforms": [
         "Editor"
