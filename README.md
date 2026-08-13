@@ -204,6 +204,31 @@ Severity controls the build result:
 
 Array and `List<T>` fields are checked per element. Empty arrays and lists are valid. Null elements are reported with their element index.
 
+`[ValidateReferenceSet]` is also discovered recursively inside Unity-serialized structs and classes, including their arrays and `List<T>` collections:
+
+```csharp
+[System.Serializable]
+public struct SpawnEntry
+{
+    [ValidateReferenceSet]
+    public GameObject prefab;
+}
+
+public sealed class SpawnSettings : MonoBehaviour
+{
+    [SerializeField]
+    List<SpawnEntry> entries;
+}
+```
+
+Every `prefab` field in `entries` is validated. Issues contain the complete Unity property path, for example `entries.Array.data[2].prefab`.
+
+Polymorphic fields and collections marked with `[SerializeReference]` are traversed using the serialized value's concrete runtime type. Null nested class values and null elements in collections of nested classes are skipped: the package validates marked reference fields that exist, but does not require their containing object to exist. Use `[ValidateInvoke]` or a `BuildTypeValidator` when the container itself is required.
+
+The attribute remains a leaf-field rule. Apply it to a `UnityEngine.Object` field or an array/`List<T>` of `UnityEngine.Object`. Applying it to a serializable container such as `List<SpawnEntry>` is unsupported and does not mean “validate every reference in this container”; place the attribute on the reference fields inside the element type instead.
+
+The same recursive discovery applies to marked `ExposedReference<T>` fields in Timeline assets and sub-assets. They are resolved through each `PlayableDirector`, including when nested in serialized structs, classes, arrays, lists, or `[SerializeReference]` values.
+
 Invalid `[ValidateInvoke]` method signatures and exceptions thrown by validation methods are reported as `Fatal`.
 
 Invalid `BuildTypeValidator` definitions and exceptions thrown by build type validators are reported as `Fatal`.
