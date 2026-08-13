@@ -131,6 +131,87 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
         }
 
         [Test]
+        public void ReferenceInsideStructListReportsFullPropertyPath()
+        {
+            var asset = ScriptableObject.CreateInstance<ValidatorNestedStructListScriptableObject>();
+            asset.entries = new List<ValidatorNestedStructEntry>
+            {
+                new ValidatorNestedStructEntry(),
+                new ValidatorNestedStructEntry()
+            };
+            string assetPath = $"{ResourcesRoot}/NestedStructList.asset";
+            AssetDatabase.CreateAsset(asset, assetPath);
+
+            BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+            Assert.That(CountFieldIssues(report, nameof(ValidatorNestedStructEntry.requiredTexture)), Is.EqualTo(2));
+            Assert.That(ContainsPropertyIssue(report, assetPath, "entries.Array.data[0].requiredTexture"), Is.True);
+            Assert.That(ContainsPropertyIssue(report, assetPath, "entries.Array.data[1].requiredTexture"), Is.True);
+        }
+
+        [Test]
+        public void ReferenceInsideStructArrayReportsFullPropertyPath()
+        {
+            var asset = ScriptableObject.CreateInstance<ValidatorNestedStructArrayScriptableObject>();
+            asset.entries = new[] { new ValidatorNestedStructEntry() };
+            string assetPath = $"{ResourcesRoot}/NestedStructArray.asset";
+            AssetDatabase.CreateAsset(asset, assetPath);
+
+            BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+            Assert.That(ContainsPropertyIssue(report, assetPath, "entries.Array.data[0].requiredTexture"), Is.True);
+        }
+
+        [Test]
+        public void ReferenceCollectionInsideNestedStructReportsElement()
+        {
+            var asset = ScriptableObject.CreateInstance<ValidatorNestedReferenceListScriptableObject>();
+            asset.entry = new ValidatorNestedReferenceListEntry
+            {
+                requiredTextures = new List<Texture2D> { null }
+            };
+            string assetPath = $"{ResourcesRoot}/NestedReferenceList.asset";
+            AssetDatabase.CreateAsset(asset, assetPath);
+
+            BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+            BuildReferenceValidator.ValidationIssue issue = FindIssue(report, assetPath, nameof(ValidatorNestedReferenceListEntry.requiredTextures), collectionIndex: 0);
+            Assert.That(issue, Is.Not.Null);
+            Assert.That(issue.PropertyPath, Is.EqualTo("entry.requiredTextures.Array.data[0]"));
+        }
+
+        [Test]
+        public void NullNestedClassIsNotAnIssueWithoutContainerAttribute()
+        {
+            var asset = ScriptableObject.CreateInstance<ValidatorNestedClassScriptableObject>();
+            asset.entry = null;
+            string assetPath = $"{ResourcesRoot}/NullNestedClass.asset";
+            AssetDatabase.CreateAsset(asset, assetPath);
+
+            BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+            Assert.That(ContainsIssue(report, assetPath, nameof(ValidatorNestedClassEntry.requiredTexture)), Is.False);
+        }
+
+        [Test]
+        public void SerializeReferenceListUsesRuntimeTypeAndSkipsNullElements()
+        {
+            var asset = ScriptableObject.CreateInstance<ValidatorManagedReferenceListScriptableObject>();
+            asset.entries = new List<ValidatorManagedReferenceBase>
+            {
+                null,
+                new ValidatorManagedReferenceEntry()
+            };
+            string assetPath = $"{ResourcesRoot}/ManagedReferenceList.asset";
+            AssetDatabase.CreateAsset(asset, assetPath);
+
+            BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+            Assert.That(CountFieldIssues(report, nameof(ValidatorManagedReferenceEntry.requiredTexture)), Is.EqualTo(1));
+            Assert.That(ContainsPropertyIssue(report, assetPath, "entries.Array.data[1].requiredTexture"), Is.True);
+        }
+
+        [Test]
         public void FilledReferencesPass()
         {
             var texture = new Texture2D(1, 1);
@@ -368,6 +449,80 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
             director.playableAsset = asset;
             director.SetReferenceValue(asset.targetTransform.exposedName, target);
             string scenePath = $"{TestRoot}/DirectorResolvedExposedReference.unity";
+            EditorSceneManager.SaveScene(scene, scenePath);
+
+            EditorBuildSettingsScene[] previousScenes = EditorBuildSettings.scenes;
+            try
+            {
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, enabled: true) };
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                Assert.That(ContainsTimelineValidatorIssue(report, scenePath), Is.False);
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = previousScenes;
+            }
+        }
+
+        [Test]
+        public void PlayableDirectorValidatesExposedReferenceInsideStructList()
+        {
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            var directorObject = new GameObject("Director");
+            PlayableDirector director = directorObject.AddComponent<PlayableDirector>();
+            var asset = ScriptableObject.CreateInstance<ValidatorNestedExposedReferencePlayableAsset>();
+            asset.entries = new List<ValidatorNestedExposedReferenceEntry>
+            {
+                new ValidatorNestedExposedReferenceEntry
+                {
+                    targetTransform = new ExposedReference<Transform> { exposedName = "nestedTarget" }
+                }
+            };
+            string assetPath = $"{TestRoot}/NestedExposedReference.playable";
+            AssetDatabase.CreateAsset(asset, assetPath);
+            director.playableAsset = asset;
+            string scenePath = $"{TestRoot}/NestedExposedReference.unity";
+            EditorSceneManager.SaveScene(scene, scenePath);
+
+            EditorBuildSettingsScene[] previousScenes = EditorBuildSettings.scenes;
+            try
+            {
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, enabled: true) };
+
+                BuildReferenceValidator.ValidationReport report = BuildReferenceValidator.ValidateBuildContent(logResults: false);
+
+                BuildReferenceValidator.ValidationIssue issue = FindTimelineValidatorIssue(report, scenePath);
+                Assert.That(issue, Is.Not.Null);
+                Assert.That(issue.Message, Does.Contain("entries.Array.data[0].targetTransform"));
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = previousScenes;
+            }
+        }
+
+        [Test]
+        public void PlayableDirectorResolvesExposedReferenceInsideStructList()
+        {
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            var directorObject = new GameObject("Director");
+            PlayableDirector director = directorObject.AddComponent<PlayableDirector>();
+            Transform target = new GameObject("Target").transform;
+            var asset = ScriptableObject.CreateInstance<ValidatorNestedExposedReferencePlayableAsset>();
+            asset.entries = new List<ValidatorNestedExposedReferenceEntry>
+            {
+                new ValidatorNestedExposedReferenceEntry
+                {
+                    targetTransform = new ExposedReference<Transform> { exposedName = "nestedTarget" }
+                }
+            };
+            string assetPath = $"{TestRoot}/ResolvedNestedExposedReference.playable";
+            AssetDatabase.CreateAsset(asset, assetPath);
+            director.playableAsset = asset;
+            director.SetReferenceValue(asset.entries[0].targetTransform.exposedName, target);
+            string scenePath = $"{TestRoot}/ResolvedNestedExposedReference.unity";
             EditorSceneManager.SaveScene(scene, scenePath);
 
             EditorBuildSettingsScene[] previousScenes = EditorBuildSettings.scenes;
@@ -784,6 +939,17 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
             return FindMethodIssue(report, sourcePath, methodName) != null;
         }
 
+        static bool ContainsPropertyIssue(BuildReferenceValidator.ValidationReport report, string sourcePath, string propertyPath)
+        {
+            foreach (BuildReferenceValidator.ValidationIssue issue in report.Issues)
+            {
+                if (issue.SourcePath == sourcePath && issue.PropertyPath == propertyPath)
+                    return true;
+            }
+
+            return false;
+        }
+
         static BuildReferenceValidator.ValidationIssue FindIssue(BuildReferenceValidator.ValidationReport report, string sourcePath, string fieldName, int? collectionIndex = null)
         {
             foreach (BuildReferenceValidator.ValidationIssue issue in report.Issues)
@@ -897,12 +1063,6 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
         }
     }
 
-    public sealed class ValidatorTestBehaviour : MonoBehaviour
-    {
-        [ValidateReferenceSet(ReferenceValidationSeverity.Fatal)]
-        public Texture2D requiredTexture;
-    }
-
     public sealed class ValidatorTestScriptableObject : ScriptableObject
     {
         [ValidateReferenceSet(ReferenceValidationSeverity.Fatal)]
@@ -925,6 +1085,66 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
     {
         [ValidateReferenceSet(ReferenceValidationSeverity.Fatal)]
         public List<Texture2D> textures;
+    }
+
+    [Serializable]
+    public struct ValidatorNestedStructEntry
+    {
+        [ValidateReferenceSet]
+        public Texture2D requiredTexture;
+    }
+
+    public sealed class ValidatorNestedStructListScriptableObject : ScriptableObject
+    {
+        public List<ValidatorNestedStructEntry> entries;
+    }
+
+    public sealed class ValidatorNestedStructArrayScriptableObject : ScriptableObject
+    {
+        public ValidatorNestedStructEntry[] entries;
+    }
+
+    [Serializable]
+    public struct ValidatorNestedReferenceListEntry
+    {
+        [ValidateReferenceSet]
+        public List<Texture2D> requiredTextures;
+    }
+
+    public sealed class ValidatorNestedReferenceListScriptableObject : ScriptableObject
+    {
+        public ValidatorNestedReferenceListEntry entry;
+    }
+
+    [Serializable]
+    public sealed class ValidatorNestedClassEntry
+    {
+        [ValidateReferenceSet]
+        public Texture2D requiredTexture;
+    }
+
+    public sealed class ValidatorNestedClassScriptableObject : ScriptableObject
+    {
+        [SerializeReference]
+        public ValidatorNestedClassEntry entry;
+    }
+
+    [Serializable]
+    public abstract class ValidatorManagedReferenceBase
+    {
+    }
+
+    [Serializable]
+    public sealed class ValidatorManagedReferenceEntry : ValidatorManagedReferenceBase
+    {
+        [ValidateReferenceSet]
+        public Texture2D requiredTexture;
+    }
+
+    public sealed class ValidatorManagedReferenceListScriptableObject : ScriptableObject
+    {
+        [SerializeReference]
+        public List<ValidatorManagedReferenceBase> entries;
     }
 
     public sealed class ValidatorDefaultSeverityScriptableObject : ScriptableObject
@@ -1027,6 +1247,23 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
 
         [ValidateReferenceSet]
         public ExposedReference<Transform> secondTarget;
+
+        public override Playable CreatePlayable(PlayableGraph graph, GameObject owner)
+        {
+            return Playable.Null;
+        }
+    }
+
+    [Serializable]
+    public struct ValidatorNestedExposedReferenceEntry
+    {
+        [ValidateReferenceSet]
+        public ExposedReference<Transform> targetTransform;
+    }
+
+    public sealed class ValidatorNestedExposedReferencePlayableAsset : PlayableAsset
+    {
+        public List<ValidatorNestedExposedReferenceEntry> entries;
 
         public override Playable CreatePlayable(PlayableGraph graph, GameObject owner)
         {

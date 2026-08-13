@@ -5,6 +5,7 @@
         "JetXR.Unity.BuildValidation",
         "JetXR.Unity.BuildValidation.Editor",
         "JetXR.Unity.BuildValidation.Timeline.Editor",
+        "JetXR.BuildValidation.Tests.Fixtures",
         "Unity.Timeline"
     ],
     "includePlatforms": [
