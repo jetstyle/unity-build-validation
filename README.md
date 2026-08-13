@@ -25,6 +25,8 @@ The package name is:
 style.jetxr.buildvalidation
 ```
 
+The package supports Unity 2022.3 and newer, including Unity 6000.5. Timeline validation is enabled automatically when `com.unity.timeline` is installed.
+
 ## Usage
 
 Add the namespace to a runtime script:
