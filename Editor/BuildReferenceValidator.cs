@@ -47,7 +47,7 @@ namespace JetXR.Unity.BuildValidation.Editor
         public static ValidationReport ValidateBuildContent(bool logResults)
         {
             var report = new ValidationReport();
-            var scannedObjects = new HashSet<string>();
+            var scannedObjects = new HashSet<Object>();
             var reportedInvalidMembers = new HashSet<string>();
             string[] buildScenes = GetEnabledBuildScenes();
             string[] resources = GetResourcesAssetPaths();
@@ -114,7 +114,7 @@ namespace JetXR.Unity.BuildValidation.Editor
                 .ToArray();
         }
 
-        static void ValidateScene(string scenePath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers)
+        static void ValidateScene(string scenePath, ValidationReport report, HashSet<Object> scannedObjects, HashSet<string> reportedInvalidMembers)
         {
             Scene scene = SceneManager.GetSceneByPath(scenePath);
             bool wasLoaded = scene.IsValid() && scene.isLoaded;
@@ -134,7 +134,7 @@ namespace JetXR.Unity.BuildValidation.Editor
             }
         }
 
-        static void ValidateAsset(string assetPath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers)
+        static void ValidateAsset(string assetPath, ValidationReport report, HashSet<Object> scannedObjects, HashSet<string> reportedInvalidMembers)
         {
             if (string.IsNullOrEmpty(assetPath))
                 return;
@@ -156,7 +156,7 @@ namespace JetXR.Unity.BuildValidation.Editor
             }
         }
 
-        static void ValidateGameObjectHierarchy(GameObject root, string sourcePath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers)
+        static void ValidateGameObjectHierarchy(GameObject root, string sourcePath, ValidationReport report, HashSet<Object> scannedObjects, HashSet<string> reportedInvalidMembers)
         {
             foreach (Transform transform in root.GetComponentsInChildren<Transform>(includeInactive: true))
             {
@@ -173,12 +173,12 @@ namespace JetXR.Unity.BuildValidation.Editor
             }
         }
 
-        static void ValidateObject(Object target, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<string> scannedObjects, HashSet<string> reportedInvalidMembers)
+        static void ValidateObject(Object target, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<Object> scannedObjects, HashSet<string> reportedInvalidMembers)
         {
             if (target == null)
                 return;
 
-            if (!scannedObjects.Add(target.GetInstanceID().ToString()))
+            if (!scannedObjects.Add(target))
                 return;
 
             ValidatedMethod[] methods = GetValidatedMethods(target.GetType());

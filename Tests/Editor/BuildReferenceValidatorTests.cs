@@ -1063,12 +1063,6 @@ namespace JetXR.Unity.BuildValidation.Tests.Editor
         }
     }
 
-    public sealed class ValidatorTestBehaviour : MonoBehaviour
-    {
-        [ValidateReferenceSet(ReferenceValidationSeverity.Fatal)]
-        public Texture2D requiredTexture;
-    }
-
     public sealed class ValidatorTestScriptableObject : ScriptableObject
     {
         [ValidateReferenceSet(ReferenceValidationSeverity.Fatal)]

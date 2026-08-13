@@ -1,0 +1,18 @@
+{
+    "name": "JetXR.BuildValidation.Tests.Fixtures",
+    "rootNamespace": "JetXR.Unity.BuildValidation.Tests",
+    "references": [
+        "JetXR.Unity.BuildValidation"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
