@@ -25,8 +25,6 @@ namespace JetXR.Unity.BuildValidation.Timeline.Editor
     [BuildTypeValidator(typeof(PlayableDirector))]
     public sealed class TimelineReferencesValidator : BuildTypeValidator<PlayableDirector, TimelineReferencesValidatorSettings>
     {
-        static readonly Dictionary<Type, ValidatedExposedReferenceField[]> FieldCache = new Dictionary<Type, ValidatedExposedReferenceField[]>();
-
         protected override BuildValidationResult Validate(PlayableDirector target, TimelineReferencesValidatorSettings settings, BuildTypeValidationContext context)
         {
             if (target.playableAsset == null)
@@ -85,51 +83,20 @@ namespace JetXR.Unity.BuildValidation.Timeline.Editor
 
         static void ValidateMarkedExposedReferencesOnObject(Object asset, PlayableDirector director, string timelinePath, BuildTypeValidationContext context)
         {
-            ValidatedExposedReferenceField[] fields = GetValidatedExposedReferenceFields(asset.GetType());
-            if (fields.Length == 0)
-                return;
-
-            var serializedObject = new SerializedObject(asset);
-            foreach (ValidatedExposedReferenceField field in fields)
+            SerializedFieldWalker.Walk(asset, serializedField =>
             {
-                SerializedProperty property = serializedObject.FindProperty(field.Field.Name);
-                string propertyPath = property != null ? property.propertyPath : field.Field.Name;
-                Object resolvedValue = ResolveExposedReference(field.Field, asset, director);
+                ValidateReferenceSetAttribute attribute = serializedField.Field.GetCustomAttribute<ValidateReferenceSetAttribute>();
+                if (attribute == null || !IsSupportedExposedReferenceField(serializedField.Field.FieldType))
+                    return;
+
+                string propertyPath = serializedField.Property != null ? serializedField.Property.propertyPath : serializedField.Field.Name;
+                Object resolvedValue = ResolveExposedReference(serializedField.Field, serializedField.Owner, director);
                 if (resolvedValue != null)
-                    continue;
+                    return;
 
                 string assetPath = AssetDatabase.GetAssetPath(asset);
-                context.Report(field.Attribute.Severity, $"Timeline exposed reference is not resolved. Timeline='{timelinePath}', Asset='{assetPath}', ObjectType='{asset.GetType().FullName}', Field='{field.Field.Name}', Property='{propertyPath}'.", field.Attribute.FailMessage);
-            }
-        }
-
-        static ValidatedExposedReferenceField[] GetValidatedExposedReferenceFields(Type type)
-        {
-            if (FieldCache.TryGetValue(type, out ValidatedExposedReferenceField[] cachedFields))
-                return cachedFields;
-
-            var fields = new List<ValidatedExposedReferenceField>();
-            for (Type currentType = type; currentType != null && currentType != typeof(MonoBehaviour) && currentType != typeof(ScriptableObject); currentType = currentType.BaseType)
-            {
-                foreach (FieldInfo field in currentType.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
-                {
-                    ValidateReferenceSetAttribute attribute = field.GetCustomAttribute<ValidateReferenceSetAttribute>();
-                    if (attribute == null)
-                        continue;
-
-                    if (!IsUnitySerializedField(field))
-                        continue;
-
-                    if (!IsSupportedExposedReferenceField(field.FieldType))
-                        continue;
-
-                    fields.Add(new ValidatedExposedReferenceField(field, attribute));
-                }
-            }
-
-            cachedFields = fields.ToArray();
-            FieldCache[type] = cachedFields;
-            return cachedFields;
+                context.Report(attribute.Severity, $"Timeline exposed reference is not resolved. Timeline='{timelinePath}', Asset='{assetPath}', ObjectType='{asset.GetType().FullName}', Field='{serializedField.Field.Name}', Property='{propertyPath}'.", attribute.FailMessage);
+            });
         }
 
         static bool IsSupportedExposedReferenceField(Type fieldType)
@@ -140,18 +107,7 @@ namespace JetXR.Unity.BuildValidation.Timeline.Editor
             return typeof(Object).IsAssignableFrom(fieldType.GetGenericArguments()[0]);
         }
 
-        static bool IsUnitySerializedField(FieldInfo field)
-        {
-            if (field.IsStatic || field.IsInitOnly || field.IsLiteral)
-                return false;
-
-            if (field.IsDefined(typeof(NonSerializedAttribute), inherit: true))
-                return false;
-
-            return field.IsPublic || field.IsDefined(typeof(SerializeField), inherit: true);
-        }
-
-        static Object ResolveExposedReference(FieldInfo field, Object target, IExposedPropertyTable resolver)
+        static Object ResolveExposedReference(FieldInfo field, object target, IExposedPropertyTable resolver)
         {
             object exposedReference = field.GetValue(target);
             MethodInfo resolveMethod = field.FieldType.GetMethod(nameof(ExposedReference<Object>.Resolve), new[] { typeof(IExposedPropertyTable) });
@@ -173,16 +129,5 @@ namespace JetXR.Unity.BuildValidation.Timeline.Editor
             return string.Join("/", names);
         }
 
-        readonly struct ValidatedExposedReferenceField
-        {
-            public ValidatedExposedReferenceField(FieldInfo field, ValidateReferenceSetAttribute attribute)
-            {
-                Field = field;
-                Attribute = attribute;
-            }
-
-            public FieldInfo Field { get; }
-            public ValidateReferenceSetAttribute Attribute { get; }
-        }
     }
 }

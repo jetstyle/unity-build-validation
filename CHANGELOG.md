@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+- Added recursive `[ValidateReferenceSet]` discovery inside serialized structs, classes, arrays, and lists.
+- Added polymorphic nested validation through `[SerializeReference]` fields and collections.
+- Added recursive Timeline `ExposedReference<T>` validation through `PlayableDirector`.
+- Validation issues for nested references now include their complete Unity serialized property path.
+
 ## [1.2.1] - 2026-06-08
 
 - Added class-based settings for `BuildTypeValidator` validators.

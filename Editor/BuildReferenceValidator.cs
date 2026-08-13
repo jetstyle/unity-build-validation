@@ -21,7 +21,6 @@ namespace JetXR.Unity.BuildValidation.Editor
     {
         const string MenuPath = "Tools/Validation/Validate Required References For Build";
 
-        static readonly Dictionary<Type, ValidatedField[]> FieldCache = new Dictionary<Type, ValidatedField[]>();
         static readonly Dictionary<Type, ValidatedMethod[]> MethodCache = new Dictionary<Type, ValidatedMethod[]>();
 
         public int callbackOrder => 0;
@@ -182,36 +181,35 @@ namespace JetXR.Unity.BuildValidation.Editor
             if (!scannedObjects.Add(target.GetInstanceID().ToString()))
                 return;
 
-            ValidatedField[] fields = GetValidatedFields(target.GetType());
             ValidatedMethod[] methods = GetValidatedMethods(target.GetType());
             Object issueContext = target;
 
-            if (fields.Length > 0)
+            SerializedFieldWalker.Walk(target, serializedField =>
             {
-                var serializedObject = new UnityEditor.SerializedObject(target);
+                ValidateReferenceSetAttribute attribute = serializedField.Field.GetCustomAttribute<ValidateReferenceSetAttribute>();
+                if (attribute == null || IsDirectExposedReferenceField(serializedField.Field.FieldType))
+                    return;
 
-                foreach (ValidatedField field in fields)
+                ValidatedField field = CreateValidatedField(serializedField.Field, attribute);
+                if (field.IsUnsupported)
                 {
-                    if (field.IsUnsupported)
-                    {
-                        if (TryMarkInvalidMemberReported(reportedInvalidMembers, field.Field))
-                            report.Add(new ValidationIssue(ReferenceValidationSeverity.Fatal, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, null, $"Field is marked for validation but has unsupported field type '{field.Field.FieldType.FullName}'. Use UnityEngine.Object references or arrays/List<T> of UnityEngine.Object references.", field.Attribute.FailMessage));
-                        continue;
-                    }
-
-                    SerializedProperty property = serializedObject.FindProperty(field.Field.Name);
-                    if (property == null)
-                    {
-                        report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, null, "Field is marked for validation but is not serialized by Unity.", field.Attribute.FailMessage));
-                        continue;
-                    }
-
-                    if (field.IsCollection)
-                        ValidateCollectionProperty(property, field, target, issueContext, sourcePath, hierarchyPath, report);
-                    else
-                        ValidateSingleReferenceProperty(property, field, target, issueContext, sourcePath, hierarchyPath, report);
+                    if (TryMarkInvalidMemberReported(reportedInvalidMembers, field.Field))
+                        report.Add(new ValidationIssue(ReferenceValidationSeverity.Fatal, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, serializedField.Property?.propertyPath, $"Field is marked for validation but has unsupported field type '{field.Field.FieldType.FullName}'. Use UnityEngine.Object references or arrays/List<T> of UnityEngine.Object references.", field.Attribute.FailMessage));
+                    return;
                 }
-            }
+
+                SerializedProperty property = serializedField.Property;
+                if (property == null)
+                {
+                    report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, null, "Field is marked for validation but is not serialized by Unity.", field.Attribute.FailMessage));
+                    return;
+                }
+
+                if (field.IsCollection)
+                    ValidateCollectionProperty(property, field, target, issueContext, sourcePath, hierarchyPath, report);
+                else
+                    ValidateSingleReferenceProperty(property, field, target, issueContext, sourcePath, hierarchyPath, report);
+            });
 
             foreach (ValidatedMethod method in methods)
             {
@@ -253,35 +251,6 @@ namespace JetXR.Unity.BuildValidation.Editor
                 if (element.objectReferenceValue == null)
                     report.Add(new ValidationIssue(field.Attribute.Severity, issueContext, sourcePath, hierarchyPath, target.GetType(), field.Field.Name, element.propertyPath, "Reference element is not set.", field.Attribute.FailMessage, i));
             }
-        }
-
-        static ValidatedField[] GetValidatedFields(Type type)
-        {
-            if (FieldCache.TryGetValue(type, out ValidatedField[] cachedFields))
-                return cachedFields;
-
-            var fields = new List<ValidatedField>();
-            for (Type currentType = type; currentType != null && currentType != typeof(MonoBehaviour) && currentType != typeof(ScriptableObject); currentType = currentType.BaseType)
-            {
-                foreach (FieldInfo field in currentType.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
-                {
-                    ValidateReferenceSetAttribute attribute = field.GetCustomAttribute<ValidateReferenceSetAttribute>();
-                    if (attribute == null)
-                        continue;
-
-                    if (!IsUnitySerializedField(field))
-                        continue;
-
-                    if (IsDirectExposedReferenceField(field.FieldType))
-                        continue;
-
-                    fields.Add(CreateValidatedField(field, attribute));
-                }
-            }
-
-            cachedFields = fields.ToArray();
-            FieldCache[type] = cachedFields;
-            return cachedFields;
         }
 
         static ValidatedMethod[] GetValidatedMethods(Type type)
@@ -406,17 +375,6 @@ namespace JetXR.Unity.BuildValidation.Editor
         {
             string key = $"{member.DeclaringType?.AssemblyQualifiedName}.{member.MetadataToken}";
             return reportedInvalidMembers.Add(key);
-        }
-
-        static bool IsUnitySerializedField(FieldInfo field)
-        {
-            if (field.IsStatic || field.IsInitOnly || field.IsLiteral)
-                return false;
-
-            if (field.IsDefined(typeof(NonSerializedAttribute), inherit: true))
-                return false;
-
-            return field.IsPublic || field.IsDefined(typeof(SerializeField), inherit: true);
         }
 
         static ValidatedField CreateValidatedField(FieldInfo field, ValidateReferenceSetAttribute attribute)
