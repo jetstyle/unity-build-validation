@@ -187,7 +187,7 @@ namespace JetXR.Unity.BuildValidation.Editor
             SerializedFieldWalker.Walk(target, serializedField =>
             {
                 ValidateReferenceSetAttribute attribute = serializedField.Field.GetCustomAttribute<ValidateReferenceSetAttribute>();
-                if (attribute == null || IsDirectExposedReferenceField(serializedField.Field.FieldType))
+                if (attribute == null || !ValidationScopeUtility.AppliesTo(attribute.Scope, target) || IsDirectExposedReferenceField(serializedField.Field.FieldType))
                     return;
 
                 ValidatedField field = CreateValidatedField(serializedField.Field, attribute);
@@ -267,7 +267,7 @@ namespace JetXR.Unity.BuildValidation.Editor
                     if (attribute == null)
                         continue;
 
-                    methods.Add(CreateValidatedMethod(method));
+                    methods.Add(CreateValidatedMethod(method, attribute.Scope));
                 }
             }
 
@@ -276,7 +276,7 @@ namespace JetXR.Unity.BuildValidation.Editor
             return cachedMethods;
         }
 
-        static ValidatedMethod CreateValidatedMethod(MethodInfo method)
+        static ValidatedMethod CreateValidatedMethod(MethodInfo method, ValidationScope scope)
         {
             string invalidReason = null;
 
@@ -287,11 +287,14 @@ namespace JetXR.Unity.BuildValidation.Editor
             else if (method.ReturnType != typeof(BuildValidationResult))
                 invalidReason = $"Method must return {typeof(BuildValidationResult).FullName}.";
 
-            return new ValidatedMethod(method, invalidReason);
+            return new ValidatedMethod(method, invalidReason, scope);
         }
 
         static void ValidateInvokedMethod(ValidatedMethod method, Object target, Object issueContext, string sourcePath, string hierarchyPath, ValidationReport report, HashSet<string> reportedInvalidMembers)
         {
+            if (!ValidationScopeUtility.AppliesTo(method.Scope, target))
+                return;
+
             if (method.IsInvalid)
             {
                 if (TryMarkInvalidMemberReported(reportedInvalidMembers, method.Method))
@@ -460,12 +463,14 @@ namespace JetXR.Unity.BuildValidation.Editor
 
         readonly struct ValidatedMethod
         {
-            public ValidatedMethod(MethodInfo method, string invalidReason)
+            public ValidatedMethod(MethodInfo method, string invalidReason, ValidationScope scope)
             {
                 Method = method;
+                Scope = scope;
                 InvalidReason = invalidReason;
             }
 
+            public ValidationScope Scope { get; }
             public MethodInfo Method { get; }
             public string InvalidReason { get; }
             public bool IsInvalid => !string.IsNullOrEmpty(InvalidReason);

@@ -86,7 +86,7 @@ namespace JetXR.Unity.BuildValidation.Timeline.Editor
             SerializedFieldWalker.Walk(asset, serializedField =>
             {
                 ValidateReferenceSetAttribute attribute = serializedField.Field.GetCustomAttribute<ValidateReferenceSetAttribute>();
-                if (attribute == null || !IsSupportedExposedReferenceField(serializedField.Field.FieldType))
+                if (attribute == null || !ValidationScopeUtility.AppliesTo(attribute.Scope, director) || !IsSupportedExposedReferenceField(serializedField.Field.FieldType))
                     return;
 
                 string propertyPath = serializedField.Property != null ? serializedField.Property.propertyPath : serializedField.Field.Name;

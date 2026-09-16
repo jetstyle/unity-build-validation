@@ -60,6 +60,21 @@ public AudioClip[] clips;
 public List<GameObject> prefabs;
 ```
 
+To require a reference only on prefab instances in scenes or nested inside other prefabs:
+
+```csharp
+[ValidateReferenceSet(ValidationScope.PrefabInstancesOnly)]
+public Transform sceneTarget;
+
+[ValidateReferenceSet(ValidationScope.PrefabInstancesOnly, ReferenceValidationSeverity.Warning, "Assign a target on this instance.")]
+public Transform optionalTarget;
+
+[ValidateInvoke(ValidationScope.PrefabInstancesOnly)]
+private BuildValidationResult ValidateInstance() => BuildValidationResult.Pass();
+```
+
+The default scope is `ValidationScope.All`: existing constructors continue checking both prefab assets and instances. `PrefabInstancesOnly` skips standalone prefab assets (including variant roots), ordinary scene objects, and ScriptableObjects. Nested instances and their children are checked, including inactive objects. For marked Timeline `ExposedReference<T>` fields, the scope applies to the resolving `PlayableDirector`.
+
 Fields must be serialized by Unity. Public fields and private fields with `[SerializeField]` are supported. Static fields and non-serialized fields are ignored.
 
 Direct `ExposedReference<T>` fields are not checked by the base reference validator. If `com.unity.timeline` is installed, the package adds a built-in `TimelineReferencesValidator` that checks timeline references through `PlayableDirector`.

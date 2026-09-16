@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.4.0] - 2026-09-16
+
+- Added `ValidationScope.PrefabInstancesOnly` constructors for reference and method validation, including nested prefab instances and Timeline exposed references. Existing constructors retain their behavior.
+
 ## [1.3.0] - 2026-08-13
 
 - Added recursive `[ValidateReferenceSet]` discovery inside serialized structs, classes, arrays, and lists.

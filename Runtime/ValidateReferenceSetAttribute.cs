@@ -24,11 +24,28 @@ namespace JetXR.Unity.BuildValidation
         }
 
         public ValidateReferenceSetAttribute(ReferenceValidationSeverity severity, string failMessage)
+            : this(ValidationScope.All, severity, failMessage)
         {
+        }
+
+        public ValidateReferenceSetAttribute(ValidationScope scope)
+            : this(scope, ReferenceValidationSeverity.Fatal, null)
+        {
+        }
+
+        public ValidateReferenceSetAttribute(ValidationScope scope, string failMessage)
+            : this(scope, ReferenceValidationSeverity.Fatal, failMessage)
+        {
+        }
+
+        public ValidateReferenceSetAttribute(ValidationScope scope, ReferenceValidationSeverity severity, string failMessage = null)
+        {
+            Scope = scope;
             Severity = severity;
             FailMessage = failMessage;
         }
 
+        public ValidationScope Scope { get; }
         public ReferenceValidationSeverity Severity { get; }
         public string FailMessage { get; }
     }
