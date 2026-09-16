@@ -8,5 +8,16 @@ namespace JetXR.Unity.BuildValidation
     [AttributeUsage(AttributeTargets.Method)]
     public sealed class ValidateInvokeAttribute : Attribute
     {
+        public ValidateInvokeAttribute()
+            : this(ValidationScope.All)
+        {
+        }
+
+        public ValidateInvokeAttribute(ValidationScope scope)
+        {
+            Scope = scope;
+        }
+
+        public ValidationScope Scope { get; }
     }
 }
